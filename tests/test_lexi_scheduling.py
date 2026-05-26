@@ -145,15 +145,16 @@ class TestAgentImports(unittest.TestCase):
     """Test that the agent module imports cleanly."""
 
     def test_agent_imports(self):
-        from app.lexi.agent import chat, _load_composio_tools, _build_scheduling_context
+        from app.lexi.agent import chat
+        from app.lexi.agents.base import load_tools as _load_composio_tools
         self.assertTrue(True)
 
     def test_agent_tool_loading_with_bad_key(self):
-        from app.lexi.agent import _load_composio_tools
+        from app.lexi.agents.base import load_tools
         with patch("app.config.settings") as mock_settings:
             mock_settings.composio_api_key = "bad_key"
-            tools = _load_composio_tools()
-            # Should return empty list gracefully, not raise
+            # load_tools takes a list of slugs; should return [] gracefully
+            tools = load_tools(["OUTLOOK_GET_CALENDAR_VIEW"])
             self.assertIsInstance(tools, list)
 
 
