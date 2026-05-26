@@ -16,6 +16,7 @@ from app.workflows.revision import request_proposal_changes, save_manual_reply
 from app.workflows.webhooks import process_composio_webhook
 
 from app.lexi import agent as lexi_agent
+from app.dashboard.approval_hooks import on_approve, on_reject
 from app.lexi.sessions import (
     create_session_id,
     get_recent_messages_for_display,
@@ -65,7 +66,9 @@ def decision_detail(request: Request, decision_id: int):
 def approve(decision_id: int):
     if not get_decision(decision_id):
         raise HTTPException(status_code=404, detail="Decision not found")
+    d = get_decision(decision_id)
     approve_all(decision_id)
+    on_approve(dict(d) if d else {})
     return RedirectResponse(f"/decisions/{decision_id}", status_code=303)
 
 
@@ -89,7 +92,9 @@ def approve_calendar_route(decision_id: int):
 def reject(decision_id: int):
     if not get_decision(decision_id):
         raise HTTPException(status_code=404, detail="Decision not found")
+    d = get_decision(decision_id)
     reject_decision(decision_id)
+    on_reject(dict(d) if d else {})
     return RedirectResponse(f"/decisions/{decision_id}", status_code=303)
 
 
