@@ -115,6 +115,58 @@ async def composio_webhook(request: Request):
     return JSONResponse({"ok": True, "decision_id": decision_id})
 
 
+# ── Lexi Chat ─────────────────────────────────────────────────────────────────
+
+@router.get("/chat", response_class=HTMLResponse)
+def chat_page(request: Request, session: str | None = None):
+    if not session:
+        session = create_session_id()
+        return RedirectResponse(f"/chat?session={session}", status_code=302)
+    messages = get_recent_messages_for_display(session)
+    sessions = list_sessions(channel="web", limit=10)
+    return templates.TemplateResponse(
+        request,
+        "chat.html",
+        {"session_id": session, "messages": messages, "sessions": sessions},
+    )
+
+
+@router.post("/chat/message")
+async def chat_message(request: Request):
+    body = await request.json()
+    user_input = (body.get("message") or "").strip()
+    session_id = (body.get("session_id") or "").strip()
+    if not user_input or not session_id:
+        raise HTTPException(status_code=400, detail="message and session_id are required")
+    reply = lexi_agent.chat(user_input, session_id, channel="web")
+    return JSONResponse({"reply": reply})
+
+
+@router.post("/webhooks/imessage")
+async def imessage_webhook(request: Request):
+    """
+    Receive inbound iMessages forwarded by the OpenClaw gateway.
+
+    Expected payload shape (OpenClaw JSON-RPC style):
+    {
+        "from": "+15551234567",         # sender handle
+        "text": "message body",
+        "chat_id": "...",               # optional iMessage chat GUID
+        "session_id": "..."             # optional; we derive one from `from` if absent
+    }
+    """
+    payload = await request.json()
+    sender = payload.get("from") or payload.get("sender") or "unknown"
+    text = (payload.get("text") or payload.get("body") or "").strip()
+    if not text:
+        return JSONResponse({"ok": True, "skipped": "empty message"})
+
+    # Use a stable session per sender so conversation history carries over
+    session_id = payload.get("session_id") or f"imsg-{sender.replace('+', '').replace(' ', '')}"
+    reply = lexi_agent.chat(text, session_id, channel="imessage")
+    return JSONResponse({"ok": True, "reply": reply, "session_id": session_id})
+
+
 async def _form_value(request: Request, key: str) -> str:
     body = (await request.body()).decode()
     values = parse_qs(body)

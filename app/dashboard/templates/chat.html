@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lexi — AI Assistant</title>
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+      .chat-shell {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 16px;
+        height: calc(100vh - 120px);
+      }
+
+      .sessions-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        overflow-y: auto;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 14px 10px;
+        background: linear-gradient(180deg, rgba(40, 37, 31, 0.95), rgba(24, 23, 21, 0.95));
+        box-shadow: var(--shadow);
+      }
+
+      .session-link {
+        display: block;
+        border-radius: 10px;
+        padding: 8px 10px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transition: background 0.15s;
+      }
+
+      .session-link:hover,
+      .session-link.active {
+        background: rgba(216, 178, 93, 0.12);
+        color: var(--gold-2);
+      }
+
+      .session-link.active {
+        border-left: 2px solid var(--gold);
+        padding-left: 8px;
+      }
+
+      .session-new-btn {
+        display: block;
+        text-align: center;
+        margin-bottom: 10px;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: #15120a;
+        background: linear-gradient(180deg, var(--gold-2), var(--gold));
+      }
+
+      .chat-panel {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgba(40, 37, 31, 0.95), rgba(24, 23, 21, 0.95));
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .chat-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--line);
+        flex-shrink: 0;
+      }
+
+      .lexi-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: linear-gradient(145deg, #8a6424, #f1d48a 50%, #6e511e);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 800;
+        color: #15120a;
+        letter-spacing: 0.04em;
+        flex-shrink: 0;
+      }
+
+      .lexi-info strong {
+        display: block;
+        color: var(--gold-2);
+        font-size: 0.95rem;
+      }
+
+      .lexi-info span {
+        color: var(--muted);
+        font-size: 0.75rem;
+      }
+
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--success);
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+
+      .messages-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .msg {
+        max-width: 78%;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .msg.user {
+        align-self: flex-end;
+        align-items: flex-end;
+      }
+
+      .msg.assistant {
+        align-self: flex-start;
+        align-items: flex-start;
+      }
+
+      .bubble {
+        border-radius: 18px;
+        padding: 11px 16px;
+        font-size: 0.9rem;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .msg.user .bubble {
+        background: linear-gradient(180deg, rgba(216, 178, 93, 0.22), rgba(216, 178, 93, 0.12));
+        border: 1px solid rgba(216, 178, 93, 0.35);
+        color: var(--text);
+        border-bottom-right-radius: 4px;
+      }
+
+      .msg.assistant .bubble {
+        background: rgba(40, 37, 31, 0.8);
+        border: 1px solid rgba(216, 178, 93, 0.18);
+        color: var(--text);
+        border-bottom-left-radius: 4px;
+      }
+
+      .msg-time {
+        font-size: 0.7rem;
+        color: var(--muted);
+        opacity: 0.7;
+      }
+
+      .typing-bubble {
+        display: none;
+        gap: 5px;
+        align-items: center;
+        padding: 12px 16px;
+      }
+
+      .typing-bubble.visible {
+        display: flex;
+      }
+
+      .typing-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--gold);
+        animation: bounce 1.2s infinite ease-in-out;
+      }
+
+      .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+      .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+      @keyframes bounce {
+        0%, 60%, 100% { transform: translateY(0); }
+        30% { transform: translateY(-6px); }
+      }
+
+      .input-row {
+        display: flex;
+        gap: 10px;
+        padding: 14px 16px;
+        border-top: 1px solid var(--line);
+        flex-shrink: 0;
+        align-items: flex-end;
+      }
+
+      #msg-input {
+        flex: 1;
+        min-height: 44px;
+        max-height: 140px;
+        padding: 11px 15px;
+        border-radius: 14px;
+        border: 1px solid rgba(216, 178, 93, 0.25);
+        background: rgba(10, 10, 9, 0.55);
+        color: var(--text);
+        font: inherit;
+        font-size: 0.9rem;
+        resize: none;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+
+      #msg-input:focus {
+        border-color: rgba(216, 178, 93, 0.55);
+      }
+
+      #msg-input::placeholder {
+        color: rgba(183, 173, 153, 0.55);
+      }
+
+      #send-btn {
+        min-height: 44px;
+        min-width: 44px;
+        border-radius: 14px;
+        padding: 10px 18px;
+        font-size: 0.85rem;
+        letter-spacing: 0.06em;
+        flex-shrink: 0;
+      }
+
+      .imsg-guide {
+        margin-top: 12px;
+        padding: 14px 18px;
+        border: 1px solid rgba(216, 178, 93, 0.22);
+        border-radius: 14px;
+        background: rgba(10, 10, 9, 0.4);
+        font-size: 0.82rem;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .imsg-guide strong {
+        color: var(--gold-2);
+      }
+
+      code {
+        font-family: ui-monospace, "Cascadia Mono", "Fira Code", monospace;
+        font-size: 0.85em;
+        background: rgba(216, 178, 93, 0.1);
+        border-radius: 5px;
+        padding: 1px 5px;
+        color: var(--gold-2);
+      }
+
+      @media (max-width: 820px) {
+        .chat-shell {
+          grid-template-columns: 1fr;
+          height: unset;
+        }
+        .sessions-panel {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <strong>AI Scheduling Agent</strong>
+        <nav style="display:flex;gap:18px;font-size:0.85rem;">
+          <a href="/">Dashboard</a>
+          <a href="/chat" style="color:var(--gold);">Chat with Lexi</a>
+        </nav>
+      </header>
+
+      <div class="chat-shell">
+        <!-- Sidebar: session list -->
+        <aside class="sessions-panel">
+          <a class="session-new-btn" href="/chat">+ New Chat</a>
+          {% for s in sessions %}
+            <a
+              class="session-link{% if s.session_id == session_id %} active{% endif %}"
+              href="/chat?session={{ s.session_id }}"
+              title="{{ s.session_id }}"
+            >
+              {% if s.channel == 'imessage' %}&#x1F4F1;{% else %}&#x1F4AC;{% endif %}
+              {{ s.last_at[:16] }}
+            </a>
+          {% endfor %}
+        </aside>
+
+        <!-- Main chat panel -->
+        <div class="chat-panel">
+          <div class="chat-header">
+            <div class="lexi-avatar">LX</div>
+            <div class="lexi-info">
+              <strong>Lexi</strong>
+              <span>Executive Assistant &mdash; Hermes 4 70B via OpenRouter</span>
+            </div>
+            <span class="status-dot" title="Online"></span>
+          </div>
+
+          <div class="messages-area" id="messages-area">
+            {% if not messages %}
+              <div class="msg assistant">
+                <div class="bubble">
+                  Hi, I&rsquo;m Lexi. I&rsquo;m Kory&rsquo;s AI executive assistant. How can I help you today?
+                </div>
+              </div>
+            {% endif %}
+            {% for m in messages %}
+              <div class="msg {{ m.role }}">
+                <div class="bubble">{{ m.content }}</div>
+                <span class="msg-time">{{ m.created_at[:16] }}</span>
+              </div>
+            {% endfor %}
+            <div class="msg assistant" id="typing-indicator" style="display:none">
+              <div class="bubble typing-bubble visible">
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <textarea
+              id="msg-input"
+              rows="1"
+              placeholder="Message Lexi&hellip;"
+              autofocus
+            ></textarea>
+            <button id="send-btn" class="button" onclick="sendMessage()">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="imsg-guide">
+        <strong>iMessage Bridge Setup</strong> &mdash;
+        To chat with Lexi through iMessages, you need a Mac with Messages.app signed in.
+        Set up OpenClaw on your Mac and point its webhook to
+        <code>POST /webhooks/imessage</code> on this server.
+        See the <a href="https://github.com/ComposioHQ/secure-openclaw" target="_blank">secure-openclaw README</a>
+        for full setup instructions.
+      </div>
+    </main>
+
+    <script>
+      const SESSION_ID = "{{ session_id }}";
+      const area = document.getElementById("messages-area");
+      const input = document.getElementById("msg-input");
+      const typing = document.getElementById("typing-indicator");
+
+      function scrollBottom() {
+        area.scrollTop = area.scrollHeight;
+      }
+      scrollBottom();
+
+      input.addEventListener("keydown", e => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      input.addEventListener("input", () => {
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 140) + "px";
+      });
+
+      function appendMessage(role, text) {
+        const div = document.createElement("div");
+        div.className = "msg " + role;
+        const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+        div.innerHTML = `<div class="bubble">${escHtml(text)}</div><span class="msg-time">${now}</span>`;
+        area.insertBefore(div, typing);
+        scrollBottom();
+      }
+
+      function escHtml(s) {
+        return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      }
+
+      async function sendMessage() {
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = "";
+        input.style.height = "auto";
+        appendMessage("user", text);
+        typing.style.display = "";
+        scrollBottom();
+
+        try {
+          const res = await fetch("/chat/message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text, session_id: SESSION_ID })
+          });
+          const data = await res.json();
+          typing.style.display = "none";
+          appendMessage("assistant", data.reply || "(no response)");
+        } catch (err) {
+          typing.style.display = "none";
+          appendMessage("assistant", "Sorry, something went wrong. Please try again.");
+        }
+      }
+    </script>
+  </body>
+</html>

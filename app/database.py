@@ -66,6 +66,20 @@ def init_db() -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_outlook_message_id
             ON emails(outlook_message_id)
             WHERE outlook_message_id IS NOT NULL;
+
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'web',
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tool_calls_json TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id
+            ON chat_messages(session_id);
             """
         )
 
