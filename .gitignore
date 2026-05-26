@@ -3,3 +3,6 @@ venv/
 logs/
 __pycache__/
 *.pyc
+data/*.db
+data/*.db-shm
+data/*.db-wal
