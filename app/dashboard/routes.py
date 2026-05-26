@@ -15,6 +15,13 @@ from app.workflows.approval import approve_all, approve_calendar, approve_email,
 from app.workflows.revision import request_proposal_changes, save_manual_reply
 from app.workflows.webhooks import process_composio_webhook
 
+from app.lexi import agent as lexi_agent
+from app.lexi.sessions import (
+    create_session_id,
+    get_recent_messages_for_display,
+    list_sessions,
+)
+
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/dashboard/templates")

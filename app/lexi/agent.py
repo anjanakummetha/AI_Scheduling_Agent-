@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from openai import OpenAI
+from openai import OpenAI, NotFoundError
 from openai.types.chat import ChatCompletionMessageParam
 
 from app.config import settings
@@ -67,6 +67,41 @@ def _execute_composio_tool(tool_name: str, arguments: dict[str, Any]) -> str:
         return json.dumps({"error": str(exc)})
 
 
+def _call_llm(
+    client: OpenAI,
+    messages: list[ChatCompletionMessageParam],
+    tools: list[dict[str, Any]],
+) -> Any:
+    """
+    Call the LLM. If the model doesn't support tool use (404 from OpenRouter),
+    automatically retry without tools so conversation still works.
+    """
+    kwargs: dict[str, Any] = {
+        "model": settings.llm_model,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 1500,
+    }
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+
+    try:
+        return client.chat.completions.create(**kwargs)
+    except NotFoundError as exc:
+        # Model doesn't support tool use on this provider — retry without tools
+        if tools and ("tool" in str(exc).lower() or "endpoint" in str(exc).lower()):
+            logger.warning(
+                "Model %s does not support tool use on this provider. "
+                "Retrying without tools. Connect Outlook once the model supports function calling.",
+                settings.llm_model,
+            )
+            kwargs.pop("tools", None)
+            kwargs.pop("tool_choice", None)
+            return client.chat.completions.create(**kwargs)
+        raise
+
+
 def chat(
     user_message: str,
     session_id: str,
@@ -91,17 +126,7 @@ def chat(
     client = _get_llm_client()
 
     for _ in range(_MAX_TOOL_ROUNDS):
-        kwargs: dict[str, Any] = {
-            "model": settings.llm_model,
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 1500,
-        }
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-
-        response = client.chat.completions.create(**kwargs)
+        response = _call_llm(client, messages, tools)
         assistant_msg = response.choices[0].message
 
         if not assistant_msg.tool_calls:
@@ -144,12 +169,7 @@ def chat(
                 }
             )
 
-    final_resp = client.chat.completions.create(
-        model=settings.llm_model,
-        messages=messages,
-        temperature=0.7,
-        max_tokens=1500,
-    )
+    final_resp = _call_llm(client, messages, tools)
     reply_text = final_resp.choices[0].message.content or ""
     save_message(session_id, "assistant", reply_text, channel=channel)
     return reply_text
