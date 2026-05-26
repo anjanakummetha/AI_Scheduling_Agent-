@@ -1,4 +1,7 @@
-"""Lexi agent: Hermes 4 70B via OpenRouter + Composio tools, agentic loop."""
+"""
+Lexi agent: Hermes/Claude via OpenRouter + Composio tools.
+Full agentic loop with scheduling state, feedback context, and Kory's rules.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ from openai.types.chat import ChatCompletionMessageParam
 from app.config import settings
 from app.lexi.persona import get_system_prompt
 from app.lexi.sessions import get_session_history, save_message
+from app.lexi.feedback import get_feedback_context
+from app.lexi.scheduling_state import get_active_sessions, init_scheduling_tables
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +28,11 @@ _OUTLOOK_TOOLS = [
     "OUTLOOK_CREATE_ME_EVENT",
     "OUTLOOK_LIST_MESSAGES",
     "OUTLOOK_SEARCH_MESSAGES",
+    "OUTLOOK_DELETE_EVENT",
+    "OUTLOOK_UPDATE_EVENT",
 ]
 
-_MAX_TOOL_ROUNDS = 6
+_MAX_TOOL_ROUNDS = 8
 
 
 def _get_llm_client() -> OpenAI:
@@ -33,10 +40,6 @@ def _get_llm_client() -> OpenAI:
 
 
 def _load_composio_tools() -> list[dict[str, Any]]:
-    """Return Composio Outlook tools as OpenAI function schemas.
-
-    Returns an empty list if Composio is not configured or the key is invalid.
-    """
     if not settings.composio_api_key:
         return []
     try:
@@ -56,10 +59,8 @@ def _load_composio_tools() -> list[dict[str, Any]]:
 
 
 def _execute_composio_tool(tool_name: str, arguments: dict[str, Any]) -> str:
-    """Execute a Composio tool and return JSON string result."""
     try:
         from app.integrations.composio_client import execute_tool
-
         result = execute_tool(tool_name, arguments)
         return json.dumps(result)
     except Exception as exc:
@@ -72,15 +73,11 @@ def _call_llm(
     messages: list[ChatCompletionMessageParam],
     tools: list[dict[str, Any]],
 ) -> Any:
-    """
-    Call the LLM. If the model doesn't support tool use (404 from OpenRouter),
-    automatically retry without tools so conversation still works.
-    """
     kwargs: dict[str, Any] = {
         "model": settings.llm_model,
         "messages": messages,
-        "temperature": 0.7,
-        "max_tokens": 1500,
+        "temperature": 0.3,
+        "max_tokens": 2000,
     }
     if tools:
         kwargs["tools"] = tools
@@ -89,17 +86,38 @@ def _call_llm(
     try:
         return client.chat.completions.create(**kwargs)
     except NotFoundError as exc:
-        # Model doesn't support tool use on this provider — retry without tools
         if tools and ("tool" in str(exc).lower() or "endpoint" in str(exc).lower()):
-            logger.warning(
-                "Model %s does not support tool use on this provider. "
-                "Retrying without tools. Connect Outlook once the model supports function calling.",
-                settings.llm_model,
-            )
+            logger.warning("Model %s does not support tool use. Retrying without tools.", settings.llm_model)
             kwargs.pop("tools", None)
             kwargs.pop("tool_choice", None)
             return client.chat.completions.create(**kwargs)
         raise
+
+
+def _build_scheduling_context(chat_session_id: str) -> str:
+    """Build a summary of active scheduling sessions to inject into context."""
+    try:
+        sessions = get_active_sessions(chat_session_id)
+        if not sessions:
+            return ""
+        lines = ["\n--- ACTIVE SCHEDULING HOLDS ---"]
+        for s in sessions:
+            slots = s.get("offered_slots") or json.loads(s.get("offered_slots_json") or "[]")
+            hold_ids = s.get("hold_event_ids") or json.loads(s.get("hold_event_ids_json") or "[]")
+            lines.append(
+                f"• Contact: {s['contact_name']} ({s['meeting_type']}) — "
+                f"Status: {s['status']} — "
+                f"{len(slots)} holds placed (IDs: {', '.join(hold_ids[:3])})"
+            )
+            for i, slot in enumerate(slots, 1):
+                start = slot.get("start", "?")
+                end = slot.get("end", "?")
+                lines.append(f"  Option {i}: {start} – {end}")
+        lines.append("--- END ACTIVE HOLDS ---\n")
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.warning("Could not build scheduling context: %s", exc)
+        return ""
 
 
 def chat(
@@ -108,18 +126,28 @@ def chat(
     channel: str = "web",
 ) -> str:
     """
-    Process a user message within a session and return Lexi's reply.
-
-    Handles the full agentic loop: LLM → tool calls → execute → LLM → reply.
-    Persists all messages to the chat_messages table.
+    Process a user message and return Lexi's reply.
+    Includes: Kory's rules, active hold state, feedback context, full agentic tool loop.
     """
+    try:
+        init_scheduling_tables()
+    except Exception:
+        pass
+
     save_message(session_id, "user", user_message, channel=channel)
 
     history = get_session_history(session_id, limit=30)
     tools = _load_composio_tools()
 
+    feedback_ctx = get_feedback_context(limit=6)
+    sched_ctx = _build_scheduling_context(session_id)
+
+    system_prompt = get_system_prompt(feedback_context=feedback_ctx)
+    if sched_ctx:
+        system_prompt += sched_ctx
+
     messages: list[ChatCompletionMessageParam] = [
-        {"role": "system", "content": get_system_prompt()},
+        {"role": "system", "content": system_prompt},
         *history,
     ]
 
@@ -143,33 +171,26 @@ def chat(
             for tc in assistant_msg.tool_calls
         ]
         save_message(
-            session_id,
-            "assistant",
-            assistant_msg.content or "",
-            channel=channel,
-            tool_calls=tool_calls_data,
+            session_id, "assistant", assistant_msg.content or "",
+            channel=channel, tool_calls=tool_calls_data,
         )
-        messages.append(
-            {
-                "role": "assistant",
-                "content": assistant_msg.content or "",
-                "tool_calls": tool_calls_data,
-            }
-        )
+        messages.append({
+            "role": "assistant",
+            "content": assistant_msg.content or "",
+            "tool_calls": tool_calls_data,
+        })
 
         for tc in assistant_msg.tool_calls:
             args = json.loads(tc.function.arguments or "{}")
             tool_result = _execute_composio_tool(tc.function.name, args)
             save_message(session_id, "tool", tool_result, channel=channel)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": tool_result,
-                }
-            )
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": tool_result,
+            })
 
-    final_resp = _call_llm(client, messages, tools)
+    final_resp = _call_llm(client, messages, [])
     reply_text = final_resp.choices[0].message.content or ""
     save_message(session_id, "assistant", reply_text, channel=channel)
     return reply_text
