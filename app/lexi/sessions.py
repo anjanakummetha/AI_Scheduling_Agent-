@@ -41,6 +41,17 @@ def save_message(
 
 
 def get_session_history(session_id: str, limit: int = 40) -> list[dict[str, Any]]:
+    """
+    Return conversation history suitable for injection into an LLM context.
+
+    Tool-call infrastructure messages (role=tool, role=assistant with tool_calls)
+    are deliberately stripped from the returned history: the tool_call_id linkage
+    is not persisted, so re-sending raw tool messages to the API causes 500 errors
+    from providers that validate the call-id chain.
+
+    The assistant's plain-text summaries (saved alongside tool calls) are preserved
+    so Lexi retains conversational context about what she did.
+    """
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -55,10 +66,17 @@ def get_session_history(session_id: str, limit: int = 40) -> list[dict[str, Any]
     rows = list(reversed(rows))
     messages = []
     for row in rows:
-        msg: dict[str, Any] = {"role": row["role"], "content": row["content"]}
-        if row["tool_calls_json"]:
-            msg["tool_calls"] = json.loads(row["tool_calls_json"])
-        messages.append(msg)
+        role = row["role"]
+        # Skip raw tool result messages — they require tool_call_id linkage we don't persist
+        if role == "tool":
+            continue
+        content = row["content"] or ""
+        # For assistant messages that only issued tool calls with no text, skip them
+        # (they contribute nothing to conversation context without their tool results)
+        if role == "assistant" and not content.strip() and row["tool_calls_json"]:
+            continue
+        # Include user and assistant messages; strip tool_calls metadata
+        messages.append({"role": role, "content": content})
     return messages
 
 
