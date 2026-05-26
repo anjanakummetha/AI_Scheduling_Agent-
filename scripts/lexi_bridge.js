@@ -1,98 +1,48 @@
 #!/usr/bin/env node
 /**
  * Lexi iMessage Bridge
- * Polls your Mac's Messages database for new inbound messages,
+ * Uses `imsg watch --json` to stream incoming messages in real time,
  * forwards them to the Lexi server, and sends replies back via imsg.
  *
  * Usage:
  *   LEXI_SERVER_URL=https://your-server.com node lexi_bridge.js
  */
 
-const { execFileSync, execSync } = require("child_process");
+const { spawn, execFileSync, execSync } = require("child_process");
 const https = require("https");
 const http = require("http");
+const readline = require("readline");
 
 const LEXI_SERVER = (process.env.LEXI_SERVER_URL || "http://localhost:8000").replace(/\/$/, "");
-const MESSAGES_DB = process.env.MESSAGES_DB || `${process.env.HOME}/Library/Messages/chat.db`;
 const IMSG = process.env.IMSG_PATH || "imsg";
-const POLL_MS = 2000;
 
-// ── Startup checks ────────────────────────────────────────────────────────
+// ── Startup checks ─────────────────────────────────────────────────────────
 
 function checkDeps() {
   try {
-    execSync(`which ${IMSG}`, { stdio: "pipe" });
+    const ver = execSync(`${IMSG} --version 2>&1`).toString().trim();
+    console.log(`✓ imsg: ${ver}`);
   } catch {
-    console.error(`\n❌  imsg not found. Install it with:\n   brew install steipete/formulae/imsg\n`);
+    console.error(`\n❌  imsg not found. Install it:\n   brew install steipete/tap/imsg\n`);
     process.exit(1);
   }
+
   try {
-    execFileSync("sqlite3", [MESSAGES_DB, "SELECT 1;"], { stdio: "pipe" });
+    const out = execFileSync(IMSG, ["chats", "--limit", "1", "--json"], { stdio: ["pipe", "pipe", "pipe"] }).toString();
+    JSON.parse(out);
+    console.log("✓ Messages DB readable");
   } catch (e) {
-    console.error(`\n❌  Cannot read Messages database at:\n   ${MESSAGES_DB}`);
-    console.error("   → Open System Settings → Privacy & Security → Full Disk Access");
-    console.error("   → Add Terminal (or your terminal app)\n");
+    console.error("\n❌  Cannot read Messages database.");
+    console.error("   → System Settings → Privacy & Security → Full Disk Access → add Terminal");
+    console.error("   → Make sure Messages.app is open and signed in\n");
     process.exit(1);
   }
 }
 
-// ── Polling ────────────────────────────────────────────────────────────────
+// ── Forward to Lexi server ─────────────────────────────────────────────────
 
-let lastRowId = 0;
-
-function initLastRowId() {
-  try {
-    const out = execFileSync("sqlite3", [MESSAGES_DB, "SELECT IFNULL(MAX(ROWID),0) FROM message;"], {
-      stdio: ["pipe", "pipe", "pipe"],
-    })
-      .toString()
-      .trim();
-    lastRowId = parseInt(out, 10) || 0;
-    console.log(`Starting from message rowid ${lastRowId}`);
-  } catch (e) {
-    console.error("Could not initialize rowid:", e.message);
-  }
-}
-
-function pollMessages() {
-  const sql = `
-    SELECT m.ROWID, h.id, m.text
-    FROM message m
-    JOIN handle h ON m.handle_id = h.ROWID
-    WHERE m.ROWID > ${lastRowId}
-      AND m.is_from_me = 0
-      AND m.text IS NOT NULL
-      AND length(trim(m.text)) > 0
-    ORDER BY m.ROWID ASC;
-  `;
-  try {
-    const out = execFileSync("sqlite3", ["-separator", "\t", MESSAGES_DB, sql], {
-      stdio: ["pipe", "pipe", "pipe"],
-    })
-      .toString()
-      .trim();
-
-    if (!out) return;
-
-    for (const line of out.split("\n")) {
-      const parts = line.split("\t");
-      if (parts.length < 3) continue;
-      const [rowid, handle, ...textParts] = parts;
-      const text = textParts.join("\t").trim();
-      if (!text) continue;
-      lastRowId = Math.max(lastRowId, parseInt(rowid, 10));
-      console.log(`\n📨  [${handle}]: ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`);
-      forwardToLexi(handle, text);
-    }
-  } catch {
-    // DB temporarily locked — skip this tick
-  }
-}
-
-// ── HTTP forward ──────────────────────────────────────────────────────────
-
-function forwardToLexi(handle, text) {
-  const payload = JSON.stringify({ from: handle, text });
+function forwardToLexi(handle, text, chatId) {
+  const payload = JSON.stringify({ from: handle, text, chat_id: chatId });
   const url = new URL(`${LEXI_SERVER}/webhooks/imessage`);
   const lib = url.protocol === "https:" ? https : http;
 
@@ -115,8 +65,6 @@ function forwardToLexi(handle, text) {
           const result = JSON.parse(data);
           if (result.reply) {
             sendReply(handle, result.reply);
-          } else {
-            console.error("No reply in response:", data.slice(0, 200));
           }
         } catch {
           console.error("Bad server response:", data.slice(0, 200));
@@ -130,30 +78,69 @@ function forwardToLexi(handle, text) {
   req.end();
 }
 
-// ── Reply via imsg ────────────────────────────────────────────────────────
+// ── Send reply via imsg ────────────────────────────────────────────────────
 
 function sendReply(handle, text) {
   try {
-    execFileSync(IMSG, ["send", handle, text], { timeout: 15000 });
+    execFileSync(IMSG, ["send", "--to", handle, "--text", text], { timeout: 15000 });
     console.log(`✅  Replied to ${handle}`);
   } catch (e) {
-    console.error(`❌  Failed to send reply to ${handle}:`, e.message);
-    console.error("   → Check Automation permission: System Settings → Privacy → Automation → Messages");
+    console.error(`❌  Send failed for ${handle}:`, e.message);
+    console.error("   → System Settings → Privacy & Security → Automation → Messages");
   }
+}
+
+// ── Watch for messages ─────────────────────────────────────────────────────
+
+function startWatcher() {
+  const watcher = spawn(IMSG, ["watch", "--json"], { stdio: ["ignore", "pipe", "pipe"] });
+
+  const rl = readline.createInterface({ input: watcher.stdout });
+
+  rl.on("line", (line) => {
+    if (!line.trim()) return;
+    try {
+      const msg = JSON.parse(line);
+      // Skip messages sent by us
+      if (msg.is_from_me) return;
+      const text = (msg.text || "").trim();
+      if (!text) return;
+
+      // Resolve the sender handle
+      const handle =
+        msg.handle ||
+        (msg.participants && msg.participants[0]) ||
+        msg.chat_identifier ||
+        "unknown";
+
+      console.log(`\n📨  [${handle}]: ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`);
+      forwardToLexi(handle, text, msg.chat_id || msg.chat_guid);
+    } catch {
+      // Non-JSON status lines from imsg — ignore
+    }
+  });
+
+  watcher.stderr.on("data", (d) => {
+    const err = d.toString().trim();
+    if (err) console.error("imsg:", err);
+  });
+
+  watcher.on("close", (code) => {
+    console.error(`\nimsg watch exited (code ${code}), restarting in 3s…`);
+    setTimeout(startWatcher, 3000);
+  });
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────
 
 checkDeps();
-initLastRowId();
 
 console.log(`\n╔══════════════════════════════════════════╗`);
 console.log(`║       Lexi iMessage Bridge — Active      ║`);
 console.log(`╠══════════════════════════════════════════╣`);
-console.log(`║  Server : ${LEXI_SERVER.padEnd(31)}║`);
-console.log(`║  DB     : ${("..."+MESSAGES_DB.slice(-28)).padEnd(31)}║`);
-console.log(`║  Poll   : every ${POLL_MS}ms                  ║`);
+console.log(`║  Server : ${LEXI_SERVER.slice(0, 31).padEnd(31)}║`);
+console.log(`║  Mode   : imsg watch --json (streaming)  ║`);
 console.log(`╚══════════════════════════════════════════╝\n`);
 console.log("Waiting for iMessages… (Ctrl+C to stop)\n");
 
-setInterval(pollMessages, POLL_MS);
+startWatcher();
