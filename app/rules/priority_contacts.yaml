@@ -1,0 +1,7 @@
+priority_contacts:
+  - name: "Priority Contact"
+    email: "priority@example.com"
+    notes: "Demo placeholder priority contact."
+    rules:
+      can_use_priority_windows: true
+      still_requires_phase_1_approval: true

@@ -1,0 +1,14 @@
+---
+description: Keep dashboard UI aligned with Iconic Founders black and gold branding
+alwaysApply: true
+---
+
+# Iconic Founders UI
+
+When changing dashboard UI, preserve the Iconic Founders visual direction:
+
+- Use near-black backgrounds, soft black panels, and restrained gold accents.
+- Primary palette: `#11100f`, `#211f1c`, `#d8b25d`, `#f1d48a`, `#b7ad99`, `#f7f4ea`.
+- Keep the experience premium, calm, and executive rather than bright or generic.
+- Use `app/dashboard/static/theme.css` for reusable styling; avoid new inline CSS unless it is a one-off layout tweak.
+- Buttons, cards, headers, and approval states should match the existing dashboard theme.

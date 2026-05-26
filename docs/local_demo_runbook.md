@@ -1,0 +1,77 @@
+# Local Demo Runbook
+
+## Verified Configuration
+
+- Hermes is configured through OpenRouter using `LLM_BASE_URL=https://openrouter.ai/api/v1`.
+- The configured model is `nousresearch/hermes-4-70b`.
+- Composio can create a session for `COMPOSIO_USER_ID=kory`.
+- Composio shows one active Outlook connected account for `kory`.
+
+## Run The Dashboard
+
+```bash
+./venv/bin/uvicorn app.main:app --reload
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+## Current Safe Test
+
+Use **Create Demo Email** in the dashboard to test:
+
+1. Local email/proposal creation.
+2. Hermes structured proposal generation.
+3. Rule validation.
+4. Separate approval buttons.
+5. Audit logging.
+
+Mock dashboard emails are blocked from creating real Outlook events or sending mail.
+
+## Real Outlook Test Path
+
+1. Start dashboard locally.
+2. Expose FastAPI with ngrok:
+
+```bash
+ngrok http 8000
+```
+
+3. Register the Composio webhook URL:
+
+```text
+https://YOUR-NGROK-DOMAIN/webhooks/composio
+```
+
+4. Enable the `OUTLOOK_MESSAGE_TRIGGER` for the connected Outlook account.
+5. Send a scheduling email to the demo Outlook account.
+6. Review the generated proposal in the dashboard.
+7. Use separate buttons:
+   - **Approve Email Only**
+   - **Approve Calendar Only**
+   - **Approve All**
+   - **Reject**
+
+## Safety Rule
+
+All existing Outlook calendar events are treated as conflicts. If the proposed slot overlaps a busy event, the app records a failed calendar execution and does not create the new event.
+
+## Local Fallback Without Ngrok
+
+If ngrok is not installed, run the dashboard and the Composio SDK listener in
+two terminals:
+
+```bash
+./venv/bin/uvicorn app.main:app --reload
+```
+
+```bash
+./venv/bin/python scripts/ensure_outlook_trigger.py
+./venv/bin/python scripts/listen_outlook_local.py
+```
+
+Then send a scheduling email to the connected demo Outlook account. The listener
+will process the Outlook trigger and create a pending approval in the dashboard.

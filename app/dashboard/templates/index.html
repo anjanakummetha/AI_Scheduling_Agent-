@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>AI Scheduling Agent</title>
+    <link rel="stylesheet" href="/static/theme.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <strong>AI Scheduling Agent</strong>
+      </header>
+
+      <section class="hero">
+        <h1>AI Scheduling Agent</h1>
+      </section>
+
+      <h2 class="section-title">Pending Approvals</h2>
+      {% if pending %}
+        {% for item in pending %}
+          <section class="card pending">
+            <h3>{{ item.subject }}</h3>
+            <p class="meta">From {{ item.sender_name or item.sender_email }} · {{ item.created_at }}</p>
+            <a class="button" href="/decisions/{{ item.id }}">Review Proposal</a>
+          </section>
+        {% endfor %}
+      {% else %}
+        <section class="card">
+          <p class="muted">No pending approvals yet.</p>
+        </section>
+      {% endif %}
+
+      <h2 class="section-title">Decision History</h2>
+      {% for item in history %}
+        <section class="card {{ item.status }}">
+          <h3>{{ item.subject }}</h3>
+          <p class="meta">{{ item.status }} · From {{ item.sender_name or item.sender_email }} · {{ item.created_at }}</p>
+          <a href="/decisions/{{ item.id }}">Open details</a>
+        </section>
+      {% endfor %}
+    </main>
+  </body>
+</html>

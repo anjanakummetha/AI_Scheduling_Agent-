@@ -1,0 +1,59 @@
+meeting_types:
+  priority_contact:
+    label: "Priority Contact"
+    duration_minutes: 30
+    format: "virtual_default"
+    phase_1_approval_required: true
+  referral_or_intro:
+    label: "Referral or General Intro"
+    duration_minutes: 30
+    format: "virtual_default"
+    phase_1_approval_required: true
+  new_client:
+    label: "New Client"
+    duration_minutes: 60
+    format: "virtual_or_in_person"
+    urgency: "same_week"
+    offer_holds: true
+    phase_1_approval_required: true
+  coffee:
+    label: "Coffee"
+    duration_minutes: 60
+    calendar_block_minutes: 90
+    preferred_times: ["08:30", "10:30"]
+    format: "in_person"
+    locations: ["Olive & Finch", "Aviano on St. Paul", "Aviano on Detroit"]
+    phase_1_approval_required: true
+  happy_hour:
+    label: "Happy Hour"
+    duration_minutes: 90
+    calendar_block_minutes: 120
+    preferred_times: ["15:30", "16:00"]
+    format: "in_person"
+    avoid_friday: true
+    phase_1_approval_required: true
+  dinner:
+    label: "Dinner"
+    duration_minutes: 120
+    calendar_block_minutes: 120
+    format: "in_person"
+    allows_after_6pm: true
+    phase_1_approval_required: true
+  podcast:
+    label: "Podcast"
+    duration_minutes: 60
+    format: "virtual_default"
+    urgency: "low"
+    phase_1_approval_required: true
+  reschedule:
+    label: "Reschedule"
+    duration_minutes: 30
+    priority_over_new_requests: true
+    offer_holds: true
+    reschedule_hold_reply_days: 1
+    phase_1_approval_required: true
+  unknown:
+    label: "Unknown"
+    duration_minutes: 30
+    format: "virtual_default"
+    phase_1_approval_required: true
