@@ -300,3 +300,46 @@ def _friendly_time_range(start: str | None, end: str | None) -> str:
     start_text = start_dt.strftime("%A, %B %-d at %-I:%M %p")
     end_text = end_dt.strftime("%-I:%M %p") if same_day else end_dt.strftime("%A, %B %-d at %-I:%M %p")
     return f"{start_text} to {end_text} Mountain Time"
+
+@router.get("/setup", response_class=HTMLResponse)
+def setup_page(request: Request):
+    from app.config import settings as _s
+    from app.integrations.composio_client import get_composio, ComposioNotConfiguredError
+
+    outlook_connected = False
+    outlook_connect_url = None
+    composio_error = None
+
+    try:
+        composio = get_composio()
+        accounts = composio.connected_accounts.list(limit=20)
+        items = getattr(accounts, "items", accounts) or []
+        outlook_connected = any(
+            (getattr(a, "toolkit_slug", "") or "").upper() == "OUTLOOK"
+            for a in items
+        )
+        if not outlook_connected and _s.composio_outlook_auth_config_id:
+            try:
+                conn_req = composio.connected_accounts.link(
+                    user_id=_s.composio_user_id,
+                    auth_config_id=_s.composio_outlook_auth_config_id,
+                )
+                outlook_connect_url = conn_req.redirect_url
+            except Exception:
+                pass
+    except ComposioNotConfiguredError as exc:
+        composio_error = str(exc)
+    except Exception as exc:
+        composio_error = str(exc)
+
+    return templates.TemplateResponse(
+        request,
+        "setup.html",
+        {
+            "outlook_connected": outlook_connected,
+            "outlook_connect_url": outlook_connect_url,
+            "composio_error": composio_error,
+            "llm_model": _s.llm_model,
+            "llm_base_url": _s.llm_base_url,
+        },
+    )

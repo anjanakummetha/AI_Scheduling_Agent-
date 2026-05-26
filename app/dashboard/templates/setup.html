@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Setup — Lexi</title>
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+      .status-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 0;
+        border-bottom: 1px solid rgba(216, 178, 93, 0.12);
+      }
+      .status-row:last-child { border-bottom: 0; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        flex-shrink: 0;
+      }
+      .badge.ok { background: rgba(111, 167, 114, 0.18); color: #6fa772; }
+      .badge.warn { background: rgba(216, 178, 93, 0.14); color: #d8b25d; }
+      .badge.err { background: rgba(200, 91, 79, 0.14); color: #c85b4f; }
+      .badge::before { content: "●"; }
+      .step {
+        counter-increment: step;
+        padding: 14px 0 14px 36px;
+        position: relative;
+        border-bottom: 1px solid rgba(216, 178, 93, 0.10);
+        font-size: 0.9rem;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+      .step:last-child { border-bottom: 0; }
+      .step::before {
+        content: counter(step);
+        position: absolute;
+        left: 0;
+        top: 14px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: rgba(216, 178, 93, 0.15);
+        border: 1px solid rgba(216, 178, 93, 0.3);
+        color: var(--gold);
+        font-size: 0.72rem;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .steps { counter-reset: step; }
+      .step strong { color: var(--text); }
+      code {
+        font-family: ui-monospace, "Cascadia Mono", "Fira Code", monospace;
+        font-size: 0.82em;
+        background: rgba(216, 178, 93, 0.10);
+        border-radius: 5px;
+        padding: 1px 6px;
+        color: var(--gold-2);
+      }
+      pre code {
+        display: block;
+        padding: 12px;
+        margin-top: 6px;
+        border-radius: 10px;
+        white-space: pre-wrap;
+        word-break: break-all;
+        font-size: 0.8rem;
+        background: rgba(10, 10, 9, 0.55);
+        border: 1px solid rgba(216, 178, 93, 0.15);
+      }
+      .connect-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <strong>Lexi Setup</strong>
+        <nav style="display:flex;gap:18px;font-size:0.85rem;">
+          <a href="/">Dashboard</a>
+          <a href="/chat">Chat with Lexi</a>
+          <a href="/setup" style="color:var(--gold);">Setup</a>
+        </nav>
+      </header>
+
+      <section class="hero">
+        <p class="eyebrow">Configuration</p>
+        <h1>Setup Status</h1>
+        <p class="muted">Everything Lexi needs to operate fully.</p>
+      </section>
+
+      <!-- Status Overview -->
+      <section class="card">
+        <h2>System Status</h2>
+
+        <div class="status-row">
+          <span class="badge ok">OK</span>
+          <span><strong>Hermes 4 70B</strong> via OpenRouter &mdash; <code>{{ llm_model }}</code></span>
+        </div>
+
+        <div class="status-row">
+          {% if not composio_error %}
+            <span class="badge ok">OK</span>
+          {% else %}
+            <span class="badge err">Error</span>
+          {% endif %}
+          <span><strong>Composio API</strong>
+            {% if composio_error %} &mdash; {{ composio_error }}{% endif %}
+          </span>
+        </div>
+
+        <div class="status-row">
+          {% if outlook_connected %}
+            <span class="badge ok">Connected</span>
+          {% else %}
+            <span class="badge warn">Not connected</span>
+          {% endif %}
+          <span><strong>Outlook / Microsoft 365</strong>
+            {% if not outlook_connected %}
+              &mdash; Connect to enable email &amp; calendar tools
+            {% endif %}
+          </span>
+        </div>
+
+        <div class="status-row">
+          <span class="badge warn">Setup needed</span>
+          <span><strong>iMessage Bridge</strong> &mdash; Mac required (see instructions below)</span>
+        </div>
+      </section>
+
+      <!-- Connect Outlook -->
+      {% if not outlook_connected %}
+      <section class="card">
+        <h2>&#x1F4E7; Connect Outlook</h2>
+        <p class="muted">
+          Lexi needs your Microsoft 365 / Outlook account connected via Composio
+          to read emails, compose replies, and manage your calendar.
+        </p>
+        {% if outlook_connect_url %}
+          <p>Click the button below — it opens a secure Microsoft login page.
+          Once you authorize, Composio stores the token and Lexi can use it immediately.</p>
+          <div class="actions">
+            <a class="button connect-btn" href="{{ outlook_connect_url }}" target="_blank">
+              &#x1F517; Connect Outlook Account
+            </a>
+          </div>
+          <p class="muted" style="font-size:0.8rem;">
+            This link is single-use. Refresh this page to generate a new one if it expires.
+          </p>
+        {% else %}
+          <p class="muted">Could not generate a connection link. Check your Composio API key.</p>
+        {% endif %}
+      </section>
+      {% else %}
+      <section class="card approved">
+        <h2>&#x2705; Outlook Connected</h2>
+        <p class="muted">Lexi has access to your Outlook email and calendar through Composio.</p>
+      </section>
+      {% endif %}
+
+      <!-- iMessage Setup -->
+      <section class="card">
+        <h2>&#x1F4F1; iMessage Bridge (Mac Setup)</h2>
+        <p class="muted">
+          <strong>You can absolutely chat from your iPhone.</strong>
+          The Mac acts as a background relay &mdash; it receives your iMessages and
+          forwards them to Lexi. You send messages from your phone as normal;
+          your Mac just needs to be on and running the bridge in the background.
+        </p>
+
+        <p style="margin-top:14px;">
+          <strong>How it works:</strong>
+          Your iPhone sends an iMessage to the Apple ID signed into your Mac.
+          The Mac&rsquo;s OpenClaw gateway catches it and posts it to
+          <code>POST /webhooks/imessage</code> on this server.
+          Lexi responds, and OpenClaw delivers the reply back as an iMessage to your iPhone.
+        </p>
+
+        <div class="steps" style="margin-top:18px;">
+          <div class="step">
+            <strong>Grant Mac permissions</strong><br>
+            System Settings &rarr; Privacy &amp; Security &rarr; <strong>Full Disk Access</strong>:
+            add Terminal.<br>
+            System Settings &rarr; Privacy &amp; Security &rarr; <strong>Automation</strong>:
+            allow Terminal to control Messages.
+          </div>
+          <div class="step">
+            <strong>Install the <code>imsg</code> CLI on your Mac</strong>
+            <pre><code>brew install steipete/formulae/imsg</code></pre>
+          </div>
+          <div class="step">
+            <strong>Run the automated setup script</strong><br>
+            Copy the script at <code>scripts/setup_imessage_mac.sh</code> to your Mac, then:
+            <pre><code>LEXI_SERVER_URL=https://your-server.com \
+COMPOSIO_API_KEY=ak_ibLpD0PDrz458tUwldIh \
+bash setup_imessage_mac.sh</code></pre>
+            Replace <code>https://your-server.com</code> with this server&rsquo;s public URL.
+            If running locally, use <a href="https://ngrok.com" target="_blank">ngrok</a>:
+            <code>ngrok http 8000</code> and use the generated URL.
+          </div>
+          <div class="step">
+            <strong>Start the OpenClaw gateway</strong>
+            <pre><code>cd ~/.lexi-openclaw && node gateway.js</code></pre>
+          </div>
+          <div class="step">
+            <strong>Test it</strong><br>
+            From your iPhone, send an iMessage to the Apple ID signed into your Mac.
+            Lexi will reply within a few seconds.
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </body>
+</html>
