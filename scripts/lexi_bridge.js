@@ -54,6 +54,7 @@ function forwardToLexi(handle, text, chatId) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "User-Agent": "Lexi-Bridge/1.0",
         "Content-Length": Buffer.byteLength(payload),
       },
     },
