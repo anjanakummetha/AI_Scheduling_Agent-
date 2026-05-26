@@ -1,6 +1,7 @@
 timezone:
   internal: "America/Denver"
   external_format: "Recipient timezone first, Mountain Time in parentheses"
+  external_example: "Thursday at 4:00 PM Eastern (2:00 PM MT)"
 
 phase:
   approval_required: true
@@ -8,18 +9,22 @@ phase:
   autonomous_calendar_writes: false
 
 urgency:
-  new_client_same_week_days: 7
+  new_client_max_days_out: 7
   podcast_min_days_out: 21
   default_search_days: 14
+  reschedule_priority: true
 
 offering:
   min_slot_options: 2
   max_slot_options: 3
+  hold_all_offered_slots: true
   offer_holds_for_types:
     - new_client
     - referral_or_intro
     - reschedule
     - coffee
+    - happy_hour
+    - dinner
   necessary_meeting_types:
     - new_client
     - reschedule
@@ -30,10 +35,18 @@ offering:
 
 holds:
   enabled: true
-  title_format: "HOLD - {name} - Option {option}"
+  title_format: "HOLD - {contact} - Option {n}"
   remind_after_days: 2
   release_after_days: 3
   reschedule_reply_days: 1
+  friday_cleanup: true  # by end of Friday, clear all holds for next week
+
+daily_rhythm:
+  wake_time: "05:00"
+  best_work_before: "12:00"
+  back_to_back_max_hours: 2
+  break_after_block_minutes: 30
+  inbox_review_time: "15:00"  # soft block — keep when feasible
 
 availability:
   weekdays:
@@ -41,42 +54,51 @@ availability:
       earliest_virtual: "08:00"
       earliest_in_person: "09:30"
       latest: "18:00"
+      notes: "Workout 6:30-8:00 AM. Doug coach 1:15 PM (hard block)."
     tuesday:
       earliest_default: "09:00"
-      earliest_exception: "06:00"
+      earliest_east_coast_exception: "06:00"
       latest: "18:00"
+      notes: "Early starts OK for East Coast contacts"
     wednesday:
       earliest_virtual: "08:00"
       earliest_in_person: "09:30"
       latest: "18:00"
+      notes: "Workout 6:30-8:00 AM."
     thursday:
       earliest_default: "09:00"
-      earliest_exception: "06:00"
+      earliest_east_coast_exception: "06:00"
       latest: "18:00"
+      notes: "Capital Demolition 7 AM (hard block). Early starts OK for East Coast."
     friday:
       earliest_virtual: "08:00"
       earliest_in_person: "09:30"
       latest: "18:00"
+      notes: "Workout 6:30-8:00 AM. Patrick sync (soft block, movable)."
   weekends:
     default_available: false
+    exception: "Only if Bridget and Maclain are occupied. Must check family calendar. Needs explicit approval."
 
 hard_blocks:
-  - name: "Trainer Workout"
-    days: ["monday", "wednesday", "friday"]
-    start: "06:30"
-    end: "08:00"
-  - name: "Doug Executive Coach"
-    days: ["monday"]
-    start: "13:15"
-    end: "14:15"
-  - name: "Capital Demolition"
-    days: ["thursday"]
-    start: "07:00"
-    end: "08:00"
-
-event_patterns:
-  hard_block:
+  recurring:
+    - name: "Trainer Workout"
+      days: ["monday", "wednesday", "friday"]
+      start: "06:30"
+      end: "08:00"
+      override: never
+    - name: "Doug Executive Coach"
+      days: ["monday"]
+      start: "13:15"
+      end: "14:15"
+      override: never
+    - name: "Capital Demolition"
+      days: ["thursday"]
+      start: "07:00"
+      end: "08:00"
+      override: never
+  event_keywords:
     - "ypo forum"
+    - "ypo"
     - "board meeting"
     - "canopy service"
     - "nextsite"
@@ -91,35 +113,119 @@ event_patterns:
     - "drop off"
     - "pick up"
     - "do not move"
-  soft_block:
+    - "kory drop off"
+    - "kory pick up"
+
+soft_blocks:
+  event_keywords:
     - "wob"
     - "work on business"
     - "inbox review"
     - "patrick"
-  hold:
-    - "[hold]"
-    - " hold "
-  travel:
-    - "stay at "
-    - "kory in "
-    - "travel"
+  override_conditions:
+    - "urgent new client"
+    - "time-sensitive deal"
+    - "priority contact explicit request"
+
+meeting_types:
+  virtual_30:
+    label: "30-min Virtual/Teams"
+    duration_minutes: 30
+    calendar_block_minutes: 30
+    format: virtual
+    back_to_back_ok: true
+    max_block_hours: 2
+  referral_or_intro:
+    label: "Referral Advocate or General Intro"
+    duration_minutes: 30
+    calendar_block_minutes: 30
+    format: virtual
+  new_client:
+    label: "New Client Meeting"
+    duration_minutes: 60
+    calendar_block_minutes: 60
+    format: virtual_or_in_person
+    urgency: same_week
+    offer_holds: true
+    note: "New clients run long — give them the room."
+  coffee:
+    label: "Coffee Meeting"
+    duration_minutes: 60
+    calendar_block_minutes: 90
+    post_buffer_minutes: 30
+    format: in_person
+    preferred_start_times: ["08:30", "09:00"]
+    default_location: "Olive & Finch, Cherry Creek"
+    locations:
+      - "Olive & Finch"
+      - "Aviano on St. Paul"
+      - "Aviano on Detroit"
+    note: "Never schedule anything immediately after. Coffee runs long."
+  happy_hour:
+    label: "Happy Hour"
+    duration_minutes: 90
+    calendar_block_minutes: 120
+    format: in_person
+    preferred_start_times: ["15:30", "16:00"]
+    hard_end: "18:00"
+    cap_per_week: 2
+    avoid_friday: true
+    requires_reservation: true
+    reservation_note: "Request a bar booth."
+    no_meetings_after: true
+    locations:
+      - name: "Cherry Creek Grill"
+        open_from: "15:30"
+        default_for: "15:30 start"
+      - name: "Hillstone"
+        open_from: "15:30"
+      - name: "Quality Italian"
+        open_from: "16:00"
+        note: "Opens 4 PM only"
+  dinner:
+    label: "Dinner Meeting"
+    duration_minutes: 120
+    calendar_block_minutes: 120
+    format: in_person
+    allows_after_6pm: true
+    cap_per_week: 1
+    preferred_area: Cherry Creek
+    note: "Stack on same evening as happy hour when possible. One evening out instead of two."
+  lunch:
+    label: "Lunch Meeting"
+    duration_minutes: 60
+    allowed: false
+    exception: "Only for clients who genuinely cannot meet at any other time."
+  podcast:
+    label: "Podcast Interview (The Turn)"
+    duration_minutes: 60
+    min_days_out: 21
+    opportunistic: true
+    cadence: "2 per month"
+    note: "No urgency. Schedule ad hoc. Currently 6-7 episodes in backlog, so no rush."
 
 caps:
   happy_hour_per_week: 2
   dinner_per_week: 1
-  lunch_default: false
+  lunch_default_allowed: false
   evening_cutoff: "18:00"
-  happy_hour_latest_start: "16:00"
-  happy_hour_hard_end: "18:00"
-  no_meetings_after_happy_hour: true
+  hard_nos:
+    - "lunch (unless client absolutely cannot do any other time)"
+    - "anything after a happy hour"
+    - "anything past 6 PM unless a planned dinner"
+    - "more than 2 happy hours per week"
+    - "more than 1 dinner per week"
+    - "weekend meetings without explicit approval"
+    - "overriding WOB blocks except for urgent new client"
 
 buffers:
   default_minutes: 0
   max_back_to_back_hours: 2
   break_after_back_to_back_minutes: 30
   coffee_post_buffer_minutes: 30
-  coffee_block_minutes: 90
-  in_person_prep_minutes: 15
+  coffee_total_block_minutes: 90
+  in_person_need_prep: false
+  drive_time_is_phone_call_time: true
 
 travel_times_minutes:
   cherry_creek: 15
@@ -127,16 +233,24 @@ travel_times_minutes:
   dtc: 30
   littleton: 45
   den_airport: 45
+  den_airport_buffer: 50
 
-coffee:
-  default_location: "Olive & Finch, Cherry Creek"
-  locations:
+travel:
+  call_during_drive_over_minutes: 15
+  note: "Happy to take calls during drive time. If driving 30 min, can book a 30-min phone call."
+
+coffee_locations:
+  default: "Olive & Finch, Cherry Creek"
+  all:
     - "Olive & Finch"
     - "Aviano on St. Paul"
     - "Aviano on Detroit"
+  exception: "Only schedule outside Cherry Creek if Kory explicitly says OK."
 
-east_coast:
-  timezone: "America/New_York"
+east_coast_contacts:
+  early_start_days: ["tuesday", "thursday"]
+  earliest_time: "06:00"
+  note: "6 AM fine especially for East Coast contacts on Tue/Thu. Not the default."
   keywords:
     - "boston"
     - "new york"
@@ -145,20 +259,46 @@ east_coast:
     - "east coast"
     - "philadelphia"
     - "washington dc"
-  allow_early_tue_thu: true
-
-defaults:
-  lunch_allowed: false
-  weekend_meetings: false
-  virtual_default: true
+    - "chicago"
+    - "atlanta"
 
 email:
   sign_off: "Let's Win,\nKory"
-  forbidden_closings: ["Best", "Warmly", "Regards", "Sincerely", "Thanks"]
-  forbidden_topics: ["YPO", "YPOer", "Young Presidents' Organization", "fellow YPO member"]
-  reply_wait_minutes: 30
+  forbidden_closings:
+    - "Best"
+    - "Warmly"
+    - "Regards"
+    - "Sincerely"
+    - "Thanks"
+  forbidden_topics:
+    - "YPO"
+    - "YPOer"
+    - "Young Presidents' Organization"
+    - "fellow YPO member"
+  tone: "Match Kory's sent emails. Direct, confident, executive."
+  timezone_in_external_emails: "Recipient's timezone first, MT in parentheses."
 
-demo:
-  default_meeting_duration_minutes: 30
-  approval_button_executes_calendar_update: true
-  approval_button_sends_draft: true
+rescheduling:
+  priority: high
+  offer_options: 2
+  hold_for_days: 1
+  note: "Reschedules take priority over new requests."
+
+pto_travel:
+  max_meetings_while_traveling: 3
+  note: "When Kory is traveling (1-2 weeks at a time), only schedule 2-3 critical check-ins."
+
+hard_no_defaults:
+  - lunch
+  - anything_after_happy_hour
+  - past_6pm_non_dinner
+  - more_than_2_happy_hours_per_week
+  - more_than_1_dinner_per_week
+  - weekends_without_approval
+
+hard_yes_defaults:
+  - "6-7 AM Tue/Thu for East Coast contacts"
+  - "Phone calls during drive time"
+  - "Cherry Creek for in-person Denver meetings"
+  - "8:30/9:00 AM for coffee"
+  - "3:30/4:00 PM for happy hour"

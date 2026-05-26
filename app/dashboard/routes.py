@@ -15,6 +15,14 @@ from app.workflows.approval import approve_all, approve_calendar, approve_email,
 from app.workflows.revision import request_proposal_changes, save_manual_reply
 from app.workflows.webhooks import process_composio_webhook
 
+from app.lexi import agent as lexi_agent
+from app.dashboard.approval_hooks import on_approve, on_reject
+from app.lexi.sessions import (
+    create_session_id,
+    get_recent_messages_for_display,
+    list_sessions,
+)
+
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/dashboard/templates")
@@ -58,7 +66,9 @@ def decision_detail(request: Request, decision_id: int):
 def approve(decision_id: int):
     if not get_decision(decision_id):
         raise HTTPException(status_code=404, detail="Decision not found")
+    d = get_decision(decision_id)
     approve_all(decision_id)
+    on_approve(dict(d) if d else {})
     return RedirectResponse(f"/decisions/{decision_id}", status_code=303)
 
 
@@ -82,7 +92,9 @@ def approve_calendar_route(decision_id: int):
 def reject(decision_id: int):
     if not get_decision(decision_id):
         raise HTTPException(status_code=404, detail="Decision not found")
+    d = get_decision(decision_id)
     reject_decision(decision_id)
+    on_reject(dict(d) if d else {})
     return RedirectResponse(f"/decisions/{decision_id}", status_code=303)
 
 
@@ -113,6 +125,58 @@ async def composio_webhook(request: Request):
     payload = await request.json()
     decision_id = process_composio_webhook(payload)
     return JSONResponse({"ok": True, "decision_id": decision_id})
+
+
+# ── Lexi Chat ─────────────────────────────────────────────────────────────────
+
+@router.get("/chat", response_class=HTMLResponse)
+def chat_page(request: Request, session: str | None = None):
+    if not session:
+        session = create_session_id()
+        return RedirectResponse(f"/chat?session={session}", status_code=302)
+    messages = get_recent_messages_for_display(session)
+    sessions = list_sessions(channel="web", limit=10)
+    return templates.TemplateResponse(
+        request,
+        "chat.html",
+        {"session_id": session, "messages": messages, "sessions": sessions},
+    )
+
+
+@router.post("/chat/message")
+async def chat_message(request: Request):
+    body = await request.json()
+    user_input = (body.get("message") or "").strip()
+    session_id = (body.get("session_id") or "").strip()
+    if not user_input or not session_id:
+        raise HTTPException(status_code=400, detail="message and session_id are required")
+    reply = lexi_agent.chat(user_input, session_id, channel="web")
+    return JSONResponse({"reply": reply})
+
+
+@router.post("/webhooks/imessage")
+async def imessage_webhook(request: Request):
+    """
+    Receive inbound iMessages forwarded by the OpenClaw gateway.
+
+    Expected payload shape (OpenClaw JSON-RPC style):
+    {
+        "from": "+15551234567",         # sender handle
+        "text": "message body",
+        "chat_id": "...",               # optional iMessage chat GUID
+        "session_id": "..."             # optional; we derive one from `from` if absent
+    }
+    """
+    payload = await request.json()
+    sender = payload.get("from") or payload.get("sender") or "unknown"
+    text = (payload.get("text") or payload.get("body") or "").strip()
+    if not text:
+        return JSONResponse({"ok": True, "skipped": "empty message"})
+
+    # Use a stable session per sender so conversation history carries over
+    session_id = payload.get("session_id") or f"imsg-{sender.replace('+', '').replace(' ', '')}"
+    reply = lexi_agent.chat(text, session_id, channel="imessage")
+    return JSONResponse({"ok": True, "reply": reply, "session_id": session_id})
 
 
 async def _form_value(request: Request, key: str) -> str:
@@ -248,3 +312,66 @@ def _friendly_time_range(start: str | None, end: str | None) -> str:
     start_text = start_dt.strftime("%A, %B %-d at %-I:%M %p")
     end_text = end_dt.strftime("%-I:%M %p") if same_day else end_dt.strftime("%A, %B %-d at %-I:%M %p")
     return f"{start_text} to {end_text} Mountain Time"
+
+@router.get("/setup", response_class=HTMLResponse)
+def setup_page(request: Request):
+    from app.config import settings as _s
+    from app.integrations.composio_client import get_composio, ComposioNotConfiguredError
+
+    outlook_connected = False
+    asana_connected = False
+    outlook_connect_url = None
+    asana_connect_url = None
+    composio_error = None
+
+    try:
+        composio = get_composio()
+        accounts = composio.connected_accounts.list(limit=30)
+        items = list(getattr(accounts, "items", accounts) or [])
+
+        for a in items:
+            slug = (getattr(getattr(a, "toolkit", None), "slug", "") or "").lower()
+            status = (getattr(a, "status", "") or "").upper()
+            if slug == "outlook" and status == "ACTIVE":
+                outlook_connected = True
+            if slug == "asana" and status == "ACTIVE":
+                asana_connected = True
+
+        if not outlook_connected and _s.composio_outlook_auth_config_id:
+            try:
+                conn_req = composio.connected_accounts.link(
+                    user_id=_s.composio_user_id,
+                    auth_config_id=_s.composio_outlook_auth_config_id,
+                )
+                outlook_connect_url = conn_req.redirect_url
+            except Exception:
+                pass
+
+        if not asana_connected and _s.composio_asana_auth_config_id:
+            try:
+                conn_req = composio.connected_accounts.link(
+                    user_id=_s.composio_user_id,
+                    auth_config_id=_s.composio_asana_auth_config_id,
+                )
+                asana_connect_url = conn_req.redirect_url
+            except Exception:
+                pass
+
+    except ComposioNotConfiguredError as exc:
+        composio_error = str(exc)
+    except Exception as exc:
+        composio_error = str(exc)
+
+    return templates.TemplateResponse(
+        request,
+        "setup.html",
+        {
+            "outlook_connected": outlook_connected,
+            "outlook_connect_url": outlook_connect_url,
+            "asana_connected": asana_connected,
+            "asana_connect_url": asana_connect_url,
+            "composio_error": composio_error,
+            "llm_model": _s.llm_model,
+            "llm_base_url": _s.llm_base_url,
+        },
+    )

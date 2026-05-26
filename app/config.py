@@ -24,6 +24,9 @@ class Settings:
     demo_mode: bool = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes"}
     scheduling_timezone: str = os.getenv("SCHEDULING_TIMEZONE", "America/Denver")
     outlook_timezone: str = os.getenv("OUTLOOK_TIMEZONE", "America/New_York")
+    lexi_agent_name: str = os.getenv("LEXI_AGENT_NAME", "Lexi")
+    composio_outlook_auth_config_id: str | None = os.getenv("COMPOSIO_OUTLOOK_AUTH_CONFIG_ID")
+    composio_asana_auth_config_id: str | None = os.getenv("COMPOSIO_ASANA_AUTH_CONFIG_ID")
 
 
 settings = Settings()
