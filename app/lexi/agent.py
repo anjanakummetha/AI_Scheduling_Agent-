@@ -32,6 +32,15 @@ _OUTLOOK_TOOLS = [
     "OUTLOOK_UPDATE_EVENT",
 ]
 
+_ASANA_TOOLS = [
+    "ASANA_CREATE_A_TASK",
+    "ASANA_GET_TASK",
+    "ASANA_UPDATE_TASK",
+    "ASANA_GET_TASKS_FROM_A_PROJECT",
+    "ASANA_GET_WORKSPACES",
+    "ASANA_GET_PROJECTS",
+]
+
 _MAX_TOOL_ROUNDS = 8
 
 
@@ -48,9 +57,26 @@ def _load_composio_tools() -> list[dict[str, Any]]:
 
         provider = OpenAIProvider()
         composio = Composio(api_key=settings.composio_api_key, provider=provider)
+
+        all_tools = list(_OUTLOOK_TOOLS)
+
+        # Add Asana tools if connected
+        try:
+            accounts = composio.connected_accounts.list(limit=20)
+            items = list(getattr(accounts, "items", accounts) or [])
+            asana_connected = any(
+                (getattr(a, "toolkit", None) and getattr(a.toolkit, "slug", "") == "asana")
+                for a in items
+            )
+            if asana_connected:
+                all_tools.extend(_ASANA_TOOLS)
+                logger.info("Asana tools loaded")
+        except Exception:
+            pass
+
         tools = composio.tools.get(
             user_id=settings.composio_user_id,
-            tools=_OUTLOOK_TOOLS,
+            tools=all_tools,
         )
         return list(tools) if tools else []
     except Exception as exc:

@@ -319,17 +319,24 @@ def setup_page(request: Request):
     from app.integrations.composio_client import get_composio, ComposioNotConfiguredError
 
     outlook_connected = False
+    asana_connected = False
     outlook_connect_url = None
+    asana_connect_url = None
     composio_error = None
 
     try:
         composio = get_composio()
-        accounts = composio.connected_accounts.list(limit=20)
-        items = getattr(accounts, "items", accounts) or []
-        outlook_connected = any(
-            (getattr(a, "toolkit_slug", "") or "").upper() == "OUTLOOK"
-            for a in items
-        )
+        accounts = composio.connected_accounts.list(limit=30)
+        items = list(getattr(accounts, "items", accounts) or [])
+
+        for a in items:
+            slug = (getattr(getattr(a, "toolkit", None), "slug", "") or "").lower()
+            status = (getattr(a, "status", "") or "").upper()
+            if slug == "outlook" and status == "ACTIVE":
+                outlook_connected = True
+            if slug == "asana" and status == "ACTIVE":
+                asana_connected = True
+
         if not outlook_connected and _s.composio_outlook_auth_config_id:
             try:
                 conn_req = composio.connected_accounts.link(
@@ -339,6 +346,17 @@ def setup_page(request: Request):
                 outlook_connect_url = conn_req.redirect_url
             except Exception:
                 pass
+
+        if not asana_connected and _s.composio_asana_auth_config_id:
+            try:
+                conn_req = composio.connected_accounts.link(
+                    user_id=_s.composio_user_id,
+                    auth_config_id=_s.composio_asana_auth_config_id,
+                )
+                asana_connect_url = conn_req.redirect_url
+            except Exception:
+                pass
+
     except ComposioNotConfiguredError as exc:
         composio_error = str(exc)
     except Exception as exc:
@@ -350,6 +368,8 @@ def setup_page(request: Request):
         {
             "outlook_connected": outlook_connected,
             "outlook_connect_url": outlook_connect_url,
+            "asana_connected": asana_connected,
+            "asana_connect_url": asana_connect_url,
             "composio_error": composio_error,
             "llm_model": _s.llm_model,
             "llm_base_url": _s.llm_base_url,

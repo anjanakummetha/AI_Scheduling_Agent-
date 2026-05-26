@@ -137,6 +137,17 @@
         </div>
 
         <div class="status-row">
+          {% if asana_connected %}
+            <span class="badge ok">Connected</span>
+          {% else %}
+            <span class="badge warn">Not connected</span>
+          {% endif %}
+          <span><strong>Asana</strong>
+            {% if not asana_connected %} &mdash; Connect to enable automatic reservation tasks{% endif %}
+          </span>
+        </div>
+
+        <div class="status-row">
           <span class="badge warn">Setup needed</span>
           <span><strong>iMessage Bridge</strong> &mdash; Mac required (see instructions below)</span>
         </div>
@@ -169,6 +180,35 @@
       <section class="card approved">
         <h2>&#x2705; Outlook Connected</h2>
         <p class="muted">Lexi has access to your Outlook email and calendar through Composio.</p>
+      </section>
+      {% endif %}
+
+      <!-- Connect Asana -->
+      {% if not asana_connected %}
+      <section class="card">
+        <h2>&#x2705; Connect Asana — Reservation Tasks</h2>
+        <p class="muted">
+          When Lexi schedules a coffee meeting, happy hour, or dinner, she will automatically
+          create an Asana task to make the reservation &mdash; with the venue, date/time,
+          party size, and special notes (e.g. "bar booth for 2"). The task is due the day before the meeting.
+        </p>
+        {% if asana_connect_url %}
+          <div class="actions">
+            <a class="button connect-btn" href="{{ asana_connect_url }}" target="_blank">
+              &#x1F517; Connect Asana
+            </a>
+          </div>
+          <p class="muted" style="font-size:0.8rem;">
+            This link is single-use. Refresh this page to generate a new one if it expires.
+          </p>
+        {% else %}
+          <p class="muted">Could not generate a connection link. Check your Composio API key.</p>
+        {% endif %}
+      </section>
+      {% else %}
+      <section class="card approved">
+        <h2>&#x2705; Asana Connected</h2>
+        <p class="muted">Lexi will automatically create reservation tasks for coffee, happy hour, and dinner meetings.</p>
       </section>
       {% endif %}
 
