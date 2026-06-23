@@ -8,7 +8,9 @@ Phase 1 — Kory approves all actions before execution.
 |---|---|
 | `rules.py` | All of Kory's scheduling rules — edit this to adjust any rule |
 | `prompts.py` | Builds the system prompt from rules — feeds rules to Hermes |
-| `agent.py` | Main agent — listens for emails, proposes actions, waits for approval |
+| `hermes_mcp_server.py` | Lexi MCP + embedded headless worker (orchestrator) |
+| `app/worker/` | Optional standalone worker (`python -m app.worker`) |
+| `app/main.py` | Optional debug dashboard only (`LEXI_DASHBOARD_ENABLED=true`) |
 | `setup.py` | Run once to register the Outlook email trigger with Composio |
 | `.env` | Your API keys and config (create from `.env.example`) |
 | `logs/decisions.log` | Full log of every decision the agent makes |
@@ -31,21 +33,33 @@ Then open `.env` and fill in:
 - `COMPOSIO_API_KEY` — from your Composio dashboard → Settings → API Keys
 - `COMPOSIO_USER_ID` — the user ID you used when connecting Microsoft 365
 
-### 3. Set up Hermes (choose one)
+### 3. Set up LLM (Anthropic, same as Hermes)
 
-**Option A — Ollama (free, local):**
+Lexi uses **Anthropic** for email triage and scheduling (not Ollama). The Hermes CLI gateway also uses `provider: anthropic` in `~/.hermes/config.yaml`.
+
+In `.env`, set:
+
 ```bash
-# Install Ollama from https://ollama.com, then:
-ollama pull hermes3
-# Leave LLM_BASE_URL=http://localhost:11434/v1 in .env
+ANTHROPIC_API_KEY=your_key_here
 ```
 
-**Option B — Together AI (cloud, easiest):**
-- Sign up at https://api.together.xyz
-- Get an API key
-- Set in `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`
+If the key is already in `~/.hermes/.env`, Lexi loads it automatically when `ANTHROPIC_API_KEY` is not set in the project `.env`.
 
-### 4. Register the Outlook trigger (run once)
+Optional: `LLM_MODEL=claude-opus-4-20250514` to align with a heavier Hermes default.
+
+### 4. Asana — Lexi Booking reminders (optional)
+
+When Kory mentions **lunch** or **dinner** in an email (from his address or his `Let's Win, Kory` signature), Lexi creates a task on the Asana board **Lexi Booking reminders**.
+
+In `.env` (leave blank until Composio + Asana are wired):
+
+- `ASANA_COMPOSIO_CONNECTION_ID` — Composio `ca_...` for the Asana connection
+- `ASANA_PROJECT_GID` — project GID for the board (from the Asana URL)
+- `KORY_SENDER_EMAILS` — optional comma-separated Kory addresses
+
+Until those are set, tasks are **simulated** locally (logged in `audit_log`).
+
+### 5. Register the Outlook trigger (run once)
 ```bash
 python setup.py
 ```
@@ -53,25 +67,51 @@ This tells Composio to watch Kory's Outlook inbox and notify the agent.
 
 ---
 
-## Running the Agent
+## Product architecture (Lindy-class, accuracy-first)
+
+**Hermes** = conversational orchestrator (Teams + Mac, Claude OAuth).  
+**Lexi** = execution layer (Composio, rules, proposals, audit).
+
+**Master plan (implementation + deployment):** [docs/FINAL_ARCHITECTURE_AND_DEPLOYMENT.md](docs/FINAL_ARCHITECTURE_AND_DEPLOYMENT.md)
+
+Quick start: [docs/hermes_lexi_assistant.md](docs/hermes_lexi_assistant.md) · Instructions: `agent_instructions.txt`
+
+**Test everything (except Teams — connect on deploy day):**
+```bash
+.venv/bin/python scripts/test_kory_phase_suite.py
+```
+Report: [docs/TEST_RESULTS_REPORT.md](docs/TEST_RESULTS_REPORT.md) · Kory needs: [docs/KORY_AGENT_NEEDS_ANALYSIS.md](docs/KORY_AGENT_NEEDS_ANALYSIS.md)
 
 ```bash
-python agent.py
+hermes gateway run --replace   # reload MCP tools
+cd /path/to/AI_Scheduling_Agent && hermes
 ```
 
-The agent will:
-1. Connect to Composio
-2. Start listening for new emails in Kory's Outlook inbox
-3. When an email arrives — analyze it with Hermes using all of Kory's rules
-4. Print the proposed action to your terminal
-5. Wait for Kory to type `y` (approve) or `n` (reject)
-6. Log every decision to `logs/decisions.log`
+MCP server: `hermes_mcp_server.py` (tools: `lexi_get_calendar_availability`, `lexi_place_calendar_hold`, …).
 
-### Approval options at the prompt:
-- `y` — approve and execute the proposed action
-- `n` — reject, nothing happens
-- `e` — edit: type your own instruction instead
-- `s` — skip this email for now
+## Running Lexi (Hermes-only Teams)
+
+```bash
+hermes gateway run --replace   # Teams :3978 + Lexi MCP + inbound worker
+```
+
+Lexi worker (embedded in MCP by default):
+1. Polls **Kory's inbox** (or Composio webhook if `python -m app.worker --webhook`)
+2. Runs triage + scheduling orchestration with full rule validation
+3. Pushes Adaptive Cards to the Hermes DM (same bot credentials in `.env`)
+4. Exposes MCP tools to Hermes for chat commands and approvals
+
+Optional Composio webhook:
+
+```bash
+.venv/bin/python -m app.worker --webhook   # :8780/webhooks/composio
+```
+
+Optional audit dashboard:
+
+```bash
+LEXI_DASHBOARD_ENABLED=true .venv/bin/uvicorn app.main:create_app --factory --port 8080
+```
 
 ---
 
@@ -80,7 +120,7 @@ The agent will:
 All scheduling rules live in `rules.py`. To change any rule:
 1. Open `rules.py`
 2. Edit the relevant section
-3. Restart the agent (`Ctrl+C` then `python agent.py`)
+3. Restart Hermes gateway (`hermes gateway run --replace`)
 
 No other files need to change when rules change.
 

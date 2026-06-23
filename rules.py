@@ -1,7 +1,17 @@
 """
-Kory's Scheduling Rules
-All scheduling logic for the AI agent lives here.
-Edit this file to adjust any rules — no need to touch the agent code.
+Kory's Scheduling Rules — default preferences (living document).
+
+These outline Kory's *standard* preferences today. They will change over time;
+edit this file when preferences shift — no need to touch agent code for most updates.
+
+Precedence (highest wins):
+  1. Kory's calendar (actual busy/free, holds, existing commitments)
+  2. What Kory says in Teams or in the email thread (explicit overrides)
+  3. These rules (defaults when calendar is open and Kory has not said otherwise)
+
+Soft rules (lunch, weekly caps, etc.) are guidance — Kory can ask for exceptions.
+Hard blocks (trainer, Doug, board meetings, etc.) still apply unless Kory explicitly
+overrides in chat before you propose or send.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -15,7 +25,6 @@ DAILY_AVAILABILITY = {
     "Wednesday": {"earliest_virtual_informal": "08:00", "earliest_formal_inperson": "09:30", "latest": "18:00"},
     "Thursday":  {"earliest_default": "09:00", "earliest_occasional": "07:00", "earliest_eastcoast": "06:00", "latest": "18:00"},
     "Friday":    {"earliest_virtual_informal": "08:00", "earliest_formal_inperson": "09:30", "latest": "18:00"},
-    "Saturday":  {"available": False, "exception": "Only if Bridget and Maclain are occupied with their own activities. Check family calendar first."},
     "Saturday":  {"available": False, "exception": "Only if Bridget and Maclain are occupied with their own activities. Check family calendar first."},
     "Sunday":    {"available": False, "exception": "Only if Bridget and Maclain are occupied with their own activities. Check family calendar first."},
 }

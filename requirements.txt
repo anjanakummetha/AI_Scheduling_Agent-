@@ -5,3 +5,8 @@ fastapi
 uvicorn
 jinja2
 pyyaml
+mcp
+botbuilder-core
+botbuilder-schema
+botframework-connector
+aiohttp

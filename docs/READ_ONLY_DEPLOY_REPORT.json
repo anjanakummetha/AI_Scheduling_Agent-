@@ -1,0 +1,51 @@
+{
+  "checks": [
+    {
+      "name": "LEXI_DRY_RUN=true",
+      "status": "FAIL",
+      "detail": ""
+    },
+    {
+      "name": "LEXI_KORY_OUTBOUND_BLOCKED=true",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "LEXI_KORY_SPACE_READ_ONLY=true",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Inbound notify = delegation_only",
+      "status": "PASS",
+      "detail": "delegation_only"
+    },
+    {
+      "name": "Delegation auto-draft enabled",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Kory read connection configured",
+      "status": "PASS",
+      "detail": "ca_qORrE-NzPib2"
+    },
+    {
+      "name": "Kory write guard blocks OUTLOOK_SEND_EMAIL",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Read slugs allowed through guard",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Write slug detection",
+      "status": "PASS",
+      "detail": ""
+    }
+  ],
+  "failed": 1,
+  "critical_failed": 1
+}

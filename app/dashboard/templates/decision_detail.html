@@ -2,41 +2,30 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Approval Review</title>
+    <title>Lexi Approval Review</title>
     <link rel="stylesheet" href="/static/theme.css">
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <strong>Approval Review</strong>
+        <strong>Lexi Approval Review</strong>
         <a href="/">Back to Dashboard</a>
       </header>
 
       <section class="hero">
-        <h1>{{ decision.subject }}</h1>
+        <h1>{{ decision.subject or '(no subject)' }}</h1>
         <p class="muted">
-          From {{ decision.sender_name or decision.sender_email }} ·
-          Email: {{ decision.email_execution_status }} · Calendar: {{ decision.calendar_execution_status }}
+          From {{ decision.sender }} · {{ decision.status }} ·
+          Intent {{ decision.intent_classification or 'unknown' }} ·
+          Priority {{ decision.priority_tier or 'medium' }}
         </p>
       </section>
 
-      {% if decision.status != "rejected" %}
+      {% if decision.status == 'pending_approval' %}
         <section class="actions">
-          {% if decision.email_execution_status != "completed" or decision.calendar_execution_status != "completed" %}
-            <form action="/decisions/{{ decision.id }}/approve" method="post">
-              <button class="approve" type="submit">Approve All</button>
-            </form>
-          {% endif %}
-          {% if decision.email_execution_status != "completed" %}
-            <form action="/decisions/{{ decision.id }}/approve-email" method="post">
-              <button class="approve" type="submit">Approve Email Only</button>
-            </form>
-          {% endif %}
-          {% if decision.calendar_execution_status != "completed" %}
-            <form action="/decisions/{{ decision.id }}/approve-calendar" method="post">
-              <button class="approve" type="submit">Approve Calendar Only</button>
-            </form>
-          {% endif %}
+          <form action="/decisions/{{ decision.id }}/approve" method="post">
+            <button class="approve" type="submit">Approve & Execute</button>
+          </form>
           <form action="/decisions/{{ decision.id }}/reject" method="post">
             <button class="reject" type="submit">Reject</button>
           </form>
@@ -46,38 +35,25 @@
       <section class="card">
         <h2>Original Email</h2>
         <p class="muted">{{ decision.received_at }}</p>
-        <pre>{{ decision.body }}</pre>
+        <pre>{{ decision.raw_body }}</pre>
       </section>
 
       <section class="card">
         <h2>Proposed Reply</h2>
-        {% if decision.status != "rejected" and decision.email_execution_status != "completed" %}
+        {% if decision.status == 'pending_approval' %}
           <form action="/decisions/{{ decision.id }}/save-reply" method="post">
-            <textarea name="proposed_reply">{{ decision.proposed_reply }}</textarea>
+            <textarea name="proposed_reply">{{ decision.drafted_reply or '' }}</textarea>
             <br>
             <button class="secondary" type="submit">Save Reply</button>
           </form>
         {% else %}
-          <pre>{{ decision.proposed_reply }}</pre>
+          <pre>{{ decision.drafted_reply or '' }}</pre>
         {% endif %}
       </section>
-
-    {% if decision.status != "rejected" and decision.email_execution_status != "completed" %}
-      <section class="card">
-        <h2>Ask Agent For Changes</h2>
-        <p class="muted">Example: “Make this warmer,” “Offer Thursday afternoon,” or “Do not mention the podcast.”</p>
-        <form action="/decisions/{{ decision.id }}/request-changes" method="post">
-          <textarea name="change_request" style="min-height: 90px;" placeholder="Tell Hermes what to change before approval..."></textarea>
-          <br>
-          <button class="secondary" type="submit">Regenerate Proposal</button>
-        </form>
-      </section>
-    {% endif %}
 
       {% if engine_reasoning %}
       <section class="card">
         <h2>Scheduling Reasoning</h2>
-        <p class="muted">Deterministic policy and availability engine — not guessed by the LLM.</p>
         <ul class="summary-list">
           {% for line in engine_reasoning %}
             <li>{{ line }}</li>
@@ -87,22 +63,35 @@
       {% endif %}
 
       <section class="card">
-        <h2>Calendar Action</h2>
-        <p>{{ calendar_action.summary }}</p>
+        <h2>Proposed Slots</h2>
         <div class="summary-list">
-          <p><strong>Event:</strong> {{ calendar_action.title }}</p>
-          <p><strong>Time:</strong> {{ calendar_action.time }}</p>
-          <p><strong>Location:</strong> {{ calendar_action.location }}</p>
-          <p><strong>Guests:</strong> {{ calendar_action.attendees }}</p>
+          {% for slot in slots %}
+            <p>{{ slot.time }}</p>
+          {% else %}
+            <p class="muted">No slots listed.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Calendar Holds</h2>
+        <div class="summary-list">
+          {% for hold in holds %}
+            <p>
+              {{ hold.slot_start }} → {{ hold.slot_end }}
+              {% if hold.expires_at %} · expires {{ hold.expires_at }}{% endif %}
+            </p>
+          {% else %}
+            <p class="muted">No holds placed.</p>
+          {% endfor %}
         </div>
       </section>
 
       <section class="card">
         <h2>Activity Log</h2>
-        <p class="muted">A plain-English record of what the agent checked and what actions were taken.</p>
         {% for event in activity_log %}
           <div class="timeline-item">
-            <strong>{{ event.title }}</strong>
+            <strong>{{ event.title }} ({{ event.level }})</strong>
             <p class="meta">{{ event.time }}</p>
             <p>{{ event.message }}</p>
           </div>

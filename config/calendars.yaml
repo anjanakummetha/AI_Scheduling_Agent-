@@ -1,0 +1,62 @@
+# Kory's Outlook calendars — multi-calendar awareness for Lexi.
+# Names should match Outlook / lexi_list_calendars (fuzzy match enabled).
+
+# WRITE TARGETS
+# Work meetings (lunch, coffee, dinner, calls, business) → work Calendar.
+# Personal Kory items (trainer, family logistics Kory attends) → Master.
+work_calendar: "Calendar"
+personal_calendar: "Kory Master Calendar (ALL)"
+primary_calendar: "Calendar"
+default_write: "Calendar"
+
+# READ for busy/free (intelligence layer filters Master kid-only / duplicate copies)
+default_read_for_conflicts:
+  - "Calendar"
+  - "Kory Master Calendar (ALL)"
+
+# M365 group calendars — visible in Outlook sidebar but NOT on Composio today.
+# Lexi will flag these as unavailable until subscribed on Kory's Graph account.
+# Blocks may still appear via Master rollup copies.
+optional_group_calendars:
+  - "IFG Team"
+  - "Kory & Heidi only"
+  - "Deal Activity"
+  - "Daily CEO Update"
+
+aliases:
+  calendar: "Calendar"
+  calender: "Calendar"
+  main: "Calendar"
+  work: "Calendar"
+  master: "Kory Master Calendar (ALL)"
+  kory_master: "Kory Master Calendar (ALL)"
+  personal: "Kory Master Calendar (ALL)"
+  team: "IFG Team"
+  ifg: "IFG Team"
+  ifg_team: "IFG Team"
+  heidi: "Kory & Heidi only"
+  kory_heidi: "Kory & Heidi only"
+  deals: "Deal Activity"
+  deal_activity: "Deal Activity"
+  deal_activities: "Deal Activity"
+  ceo_daily: "Daily CEO Update"
+  daily_ceo: "Daily CEO Update"
+  birthdays: "Birthdays"
+  tasks: "Kory's tasks - My workspace"
+
+# Intent → write calendar (business defaults to work Calendar)
+write_by_intent:
+  lunch_request: "Calendar"
+  lunch: "Calendar"
+  dinner_request: "Calendar"
+  dinner: "Calendar"
+  coffee: "Calendar"
+  happy_hour: "Calendar"
+  pitch: "Calendar"
+  internal_sync: "Calendar"
+  board_meeting: "Calendar"
+  delegation: "Calendar"
+  reschedule: "Calendar"
+  virtual_30: "Calendar"
+  new_client: "Calendar"
+  ifg_meeting: "IFG Team"

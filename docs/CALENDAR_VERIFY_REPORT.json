@@ -1,0 +1,22 @@
+{
+  "consulted": [
+    {
+      "configured_name": "Kory Master Calendar (ALL)",
+      "resolved": true,
+      "name": "Kory Master Calendar (ALL)",
+      "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEGAAAz1opVsp0OQIyLOLZDmMP4AAAhaaiEAAA=",
+      "can_edit": true,
+      "primary": true
+    },
+    {
+      "configured_name": "Calendar",
+      "resolved": true,
+      "name": "Calendar",
+      "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEGAAAz1opVsp0OQIyLOLZDmMP4AAAAALVNAAA=",
+      "can_edit": true,
+      "primary": false
+    }
+  ],
+  "failed": 0,
+  "primary": "Kory Master Calendar (ALL)"
+}

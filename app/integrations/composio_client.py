@@ -1,9 +1,9 @@
-"""Composio session and tool execution helpers."""
+"""Composio session and tool execution helpers (read Kory / write sandbox)."""
 
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from composio import Composio
 
@@ -12,6 +12,9 @@ from app.config import settings
 
 class ComposioNotConfiguredError(RuntimeError):
     """Raised when Composio credentials are missing."""
+
+
+ConnectionRole = Literal["read", "write", "asana", "lexi"]
 
 
 def _require_api_key() -> str:
@@ -25,11 +28,141 @@ def get_composio() -> Composio:
     return Composio(api_key=_require_api_key())
 
 
-def execute_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _account_entity_id(connection_id: str) -> str:
+    account = get_composio().connected_accounts.get(connection_id)
+    user_id = getattr(account, "user_id", None)
+    if not user_id and hasattr(account, "model_dump"):
+        user_id = account.model_dump().get("user_id")
+    if not user_id:
+        raise ComposioNotConfiguredError(
+            f"Could not resolve Composio user_id for connection {connection_id}."
+        )
+    return str(user_id)
+
+
+def resolve_connection(role: ConnectionRole) -> tuple[str, str]:
+    """Return (connected_account_id, entity_id) for read, write, lexi, or Asana."""
+    if role == "lexi":
+        connection_id = settings.lexi_composio_connection_id
+        if not connection_id:
+            raise ComposioNotConfiguredError("LEXI_COMPOSIO_CONNECTION_ID is missing.")
+        entity_id = _account_entity_id(connection_id)
+        return connection_id, entity_id
+
+    if role == "read":
+        connection_id = settings.kory_composio_connection_id
+        if not connection_id:
+            raise ComposioNotConfiguredError("KORY_COMPOSIO_CONNECTION_ID is missing.")
+        entity_id = settings.composio_entity_id or _account_entity_id(connection_id)
+        return connection_id, entity_id
+
+    if role == "asana":
+        connection_id = settings.asana_composio_connection_id
+        if not connection_id:
+            raise ComposioNotConfiguredError("ASANA_COMPOSIO_CONNECTION_ID is missing.")
+        entity_id = settings.composio_entity_id or _account_entity_id(connection_id)
+        return connection_id, entity_id
+
+    # write
+    if settings.lexi_write_mode == "kory":
+        connection_id = settings.kory_composio_connection_id
+        if not connection_id:
+            raise ComposioNotConfiguredError("KORY_COMPOSIO_CONNECTION_ID is missing.")
+        entity_id = settings.composio_entity_id or _account_entity_id(connection_id)
+        return connection_id, entity_id
+
+    connection_id = settings.sandbox_composio_connection_id
+    if not connection_id:
+        raise ComposioNotConfiguredError("SANDBOX_COMPOSIO_CONNECTION_ID is missing.")
+    entity_id = settings.sandbox_composio_entity_id or _account_entity_id(connection_id)
+    return connection_id, entity_id
+
+
+def require_composio_connection_id() -> str:
+    """Backward-compatible: return write connection id."""
+    return resolve_connection("write")[0]
+
+
+def get_composio_entity_id() -> str:
+    """Backward-compatible: return write entity id."""
+    return resolve_connection("write")[1]
+
+
+def require_asana_connection_id() -> str:
+    return resolve_connection("asana")[0]
+
+
+def _is_write_tool(tool_slug: str) -> bool:
+    from app.safety.kory_read_only import is_outlook_write_slug
+
+    slug = tool_slug.upper()
+    if slug.startswith(("ASANA_CREATE", "ASANA_ADD", "ASANA_UPDATE")):
+        return True
+    return is_outlook_write_slug(slug)
+
+
+def _is_outlook_read_tool(tool_slug: str) -> bool:
+    slug = tool_slug.upper()
+    if slug.startswith("ASANA_"):
+        return False
+    if _is_write_tool(tool_slug):
+        return False
+    return slug.startswith("OUTLOOK_") or slug.startswith("MICROSOFT_OUTLOOK_")
+
+
+def _is_outlook_outbound_tool(tool_slug: str) -> bool:
+    slug = tool_slug.upper()
+    return slug.startswith(("OUTLOOK_SEND", "OUTLOOK_CREATE", "MICROSOFT_OUTLOOK_SEND"))
+
+
+def _kory_outbound_email_blocked(tool_slug: str, role: ConnectionRole) -> bool:
+    if not settings.lexi_kory_outbound_blocked:
+        return False
+    if role != "write" or settings.lexi_write_mode != "kory":
+        return False
+    return _is_outlook_outbound_tool(tool_slug)
+
+
+def execute_tool(
+    tool_slug: str,
+    arguments: dict[str, Any],
+    *,
+    role: ConnectionRole | None = None,
+) -> dict[str, Any]:
+    """Execute a Composio tool with read/write/asana routing."""
+    if role is None:
+        if tool_slug.upper().startswith("ASANA_"):
+            role = "asana"
+        elif _is_outlook_read_tool(tool_slug):
+            role = "read"
+        else:
+            role = "write"
+
+    if _kory_outbound_email_blocked(tool_slug, role):
+        raise PermissionError(
+            "Kory outbound email is DISABLED (LEXI_KORY_OUTBOUND_BLOCKED=true). "
+            "No sends or draft creation until explicitly re-enabled."
+        )
+
+    connection_id, entity_id = resolve_connection(role)
+    from app.safety.kory_read_only import assert_kory_space_write_allowed
+
+    assert_kory_space_write_allowed(tool_slug=tool_slug, connection_id=connection_id)
+
+    if settings.lexi_dry_run and _is_write_tool(tool_slug):
+        preview = {"tool": tool_slug, "arguments": arguments, "dry_run": True, "role": role}
+        print(
+            f"\n[Lexi DRY RUN] Composio write blocked: {tool_slug} (role={role})\n"
+            f"  args: {arguments}\n",
+            flush=True,
+        )
+        return {"data": preview, "log_id": "dry-run-no-log", "dry_run": True}
+
     response = get_composio().tools.execute(
         tool_slug,
         arguments=arguments,
-        user_id=settings.composio_user_id,
+        connected_account_id=connection_id,
+        user_id=entity_id,
         dangerously_skip_version_check=True,
     )
     if isinstance(response, dict):
@@ -47,4 +180,63 @@ def execute_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return {
         "data": data,
         "log_id": log_id,
+        "connected_account_id": connection_id,
+        "entity_id": entity_id,
+        "role": role,
+    }
+
+
+def execute_read_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return execute_tool(tool_slug, arguments, role="read")
+
+
+def execute_write_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return execute_tool(tool_slug, arguments, role="write")
+
+
+def execute_asana_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return execute_tool(tool_slug, arguments, role="asana")
+
+
+def resolve_search_user_id() -> str:
+    """Entity/user id for Composio Search (no connected account required)."""
+    if settings.composio_entity_id:
+        return settings.composio_entity_id
+    kory_id = settings.kory_composio_connection_id
+    if kory_id:
+        return _account_entity_id(kory_id)
+    return "lexi-default"
+
+
+def execute_search_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Execute Composio Search toolkit tools (read-only; no Outlook connection)."""
+    _require_api_key()
+    slug = tool_slug.upper()
+    if not slug.startswith("COMPOSIO_SEARCH_"):
+        raise ValueError(f"Not a Composio Search slug: {tool_slug}")
+
+    user_id = resolve_search_user_id()
+    response = get_composio().tools.execute(
+        slug,
+        arguments=arguments,
+        user_id=user_id,
+        dangerously_skip_version_check=True,
+    )
+    if isinstance(response, dict):
+        data = response.get("data")
+        error = response.get("error")
+        log_id = response.get("log_id")
+    else:
+        data = getattr(response, "data", None)
+        error = getattr(response, "error", None)
+        log_id = getattr(response, "log_id", None)
+
+    if error:
+        raise RuntimeError(f"{slug} failed: {error}")
+
+    return {
+        "data": data,
+        "log_id": log_id,
+        "user_id": user_id,
+        "role": "search",
     }

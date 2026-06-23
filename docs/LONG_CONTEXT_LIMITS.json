@@ -1,0 +1,12 @@
+{
+  "passed": 7,
+  "total": 7,
+  "limits": {
+    "hermes_model_window_tokens": "~200000 (Claude Sonnet 4.6)",
+    "scheduling_session_max_chars": 32000,
+    "calendar_busy_events_max": 80,
+    "search_min_interval_sec": 1.0,
+    "recommended_max_tool_turns_per_chat": 25,
+    "llm_model": "claude-sonnet-4-6"
+  }
+}

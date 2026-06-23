@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Initialize database
+        run: python scripts/init_lexi_db.py
+
+      - name: Run test suite (CI — no Composio/LLM keys)
+        run: python scripts/test_kory_phase_suite.py --skip-live-llm --ci
+
+      - name: Approval safety gates
+        run: python scripts/test_approval_safety.py
+
+# To run live Composio tests in CI, add repository secrets and a separate workflow job.

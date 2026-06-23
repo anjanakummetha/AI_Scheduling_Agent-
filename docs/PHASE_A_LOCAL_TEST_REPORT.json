@@ -1,0 +1,143 @@
+{
+  "generated_at": "2026-06-17T20:07:07.290279+00:00",
+  "phase": "A_local_read_only",
+  "safety_env": {
+    "ok": false,
+    "required": {
+      "LEXI_DRY_RUN": true,
+      "LEXI_KORY_OUTBOUND_BLOCKED": true,
+      "LEXI_KORY_SPACE_READ_ONLY": true
+    },
+    "actual": {
+      "LEXI_DRY_RUN": false,
+      "LEXI_KORY_OUTBOUND_BLOCKED": true,
+      "LEXI_KORY_SPACE_READ_ONLY": true
+    }
+  },
+  "summary": {
+    "total_suites": 12,
+    "passed": 7,
+    "failed": 5,
+    "all_pass": false
+  },
+  "results": [
+    {
+      "label": "UAT safety env locks",
+      "ok": false,
+      "detail": {
+        "ok": false,
+        "required": {
+          "LEXI_DRY_RUN": true,
+          "LEXI_KORY_OUTBOUND_BLOCKED": true,
+          "LEXI_KORY_SPACE_READ_ONLY": true
+        },
+        "actual": {
+          "LEXI_DRY_RUN": false,
+          "LEXI_KORY_OUTBOUND_BLOCKED": true,
+          "LEXI_KORY_SPACE_READ_ONLY": true
+        }
+      }
+    },
+    {
+      "label": "Read-only deploy locks",
+      "ok": false,
+      "elapsed_s": 0.07,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/verify_read_only_deploy.py",
+      "stdout_tail": "\n=== Read-only UAT deploy verification ===\n\n  [FAIL] LEXI_DRY_RUN=true\n  [PASS] LEXI_KORY_OUTBOUND_BLOCKED=true\n  [PASS] LEXI_KORY_SPACE_READ_ONLY=true\n  [PASS] Inbound notify = delegation_only \u2014 delegation_only\n  [PASS] Delegation auto-draft enabled\n  [PASS] Kory read connection configured \u2014 ca_qORrE-NzPib2\n  [PASS] Kory write guard blocks OUTLOOK_SEND_EMAIL\n  [PASS] Read slugs allowed through guard\n  [PASS] Write slug detection\n\nReport: /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/docs/READ_ONLY_DEPLOY_REPORT.json\nSummary: 8/9 passed\n\n1 CRITICAL safety check(s) failed \u2014 do not UAT until fixed.\n\n",
+      "stderr_tail": ""
+    },
+    {
+      "label": "Pre-Kory switch (read-only)",
+      "ok": false,
+      "elapsed_s": 1.6,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/verify_pre_kory_switch.py --read-only-uat",
+      "stdout_tail": "\n=== Read-only UAT mode (recommended before live cutover) ===\n\n  Run: .venv/bin/python scripts/verify_read_only_deploy.py\n\n  [FAIL] LEXI_DRY_RUN on\n  [PASS] LEXI_KORY_OUTBOUND_BLOCKED\n  [PASS] LEXI_KORY_SPACE_READ_ONLY\n  [PASS] delegation_only inbound \u2014 delegation_only\n  [PASS] Read connection = Kory \u2014 ca_qORrE-NzPib2\n  [PASS] Composio configured\n\nReport: /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/docs/PRE_KORY_SWITCH_REPORT.json\nSummary: 5/6 passed\n\n",
+      "stderr_tail": ""
+    },
+    {
+      "label": "Approval safety",
+      "ok": true,
+      "elapsed_s": 5.72,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/test_approval_safety.py",
+      "stdout_tail": "\n=== Approval safety gates ===\n\n  [PASS] kory_approves_all (rules.py)\n  [PASS] auto_execute disabled\n  [PASS] immediate_send disabled\n  [PASS] orchestrator auto_execute blocked \u2014 kory_approves_all_phase1\n  [PASS] direct send without approval blocked \u2014 Kory outbound email is DISABLED (LEXI_KORY_OUTBOUND_BLOCKED=true). Re-enable onl\n  [PASS] kory channel approved send blocked \u2014 Kory outbound email is DISABLED (LEXI_KORY_OUTBOUND_BLOCKED=true). Re-enable onl\n  [PASS] lexi channel without approval blocked \u2014 Outbound email blocked: Kory approval required. Approve in Teams (Send on card o\n  [PASS] lexi channel approved path authorized \u2014 dry-run or live send path reached\n\nALL PASS\n\n",
+      "stderr_tail": ""
+    },
+    {
+      "label": "MCP tools smoke",
+      "ok": true,
+      "elapsed_s": 1.57,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/test_mcp_tools.py",
+      "stdout_tail": "NzPib2', 'lexi_connection': 'ca_4BTJ6d0O8sSZ', 'lexi_mailbox_email': 'lexi@iconicfounders.com', 'write_connection': 'ca_yd7Gdu84OgJO', 'sandbox_mailbox_email': None, 'sandbox_email_loopback': False, 'asana_enabled': True, 'asana_connection': 'ca_cISuS3L6HDZn', 'asana_project_gid_set': True, 'lexi_teams_enabled': True, 'lexi_teams_text_only': False, 'teams_cards_ready': True, 'teams_conversation_registered': True, 'teams_conversation_id_prefix': 'a:10r5wx4_HFGrAR8zvqEGJ8', 'lexi_teams_inbound_notify_mode': 'delegation_only', 'lexi_delegation_auto_draft': True, 'lexi_composio_search_enabled': True, 'composio_configured': True, 'pending_approval_count': 0, 'scheduling_timezone': 'America/Denver', 'outlook_timezone': 'America/New_York', 'llm_model': 'claude-sonnet-4-6', 'learning_summary': 'RECENT APPROVAL PATTERNS (30d \u2014 use to improve drafts):\\n- approved / dinner_request / as-is: 6', 'safety': {'lexi_dry_run': False, 'lexi_kory_outbound_blocked': True, 'lexi_kory_space_read_only': True, 'lexi_delegation_auto_draft': True}, 'ingress': {'mode': 'webhook_primary_backup_poll', 'detail': 'webhook + backup inbox list every 30m', 'webhook_enabled': True, 'poll_outlook': False, 'backup_poll_minutes': 30, 'webhook_public_url': None, 'webhook_path': '/webhooks/composio', 'worker_running': True}, 'note': 'Production: lexi@ sends + Asana enabled; all writes need Teams approval. Kory Outlook/calendar read-only. Composio Search: on. Teams inbound notify: delegation_only. Delegation auto-draft when Kory CCs Lexi.', 'worker_running': True, 'teams_mode': 'hermes_only'}}\n[ok] get_pending_decisions -> {'ok': True, 'count': 0, 'queue': [], 'formatted_list': []}\n[ok] approve_decision(999999999) -> {'ok': False, 'proposal_id': 999999999, 'status': 'pending_approval', 'decision': 'approved', 'calendar_event_id': None, 'email_sent': False, 'holds_released': 0, 'holds_confirmed': 0, 'errors': ['ValueError: Proposal 999999999 was not found.'], 'warnings': []}\n[pass] MCP smoke test completed.\n",
+      "stderr_tail": ""
+    },
+    {
+      "label": "Lexi pipeline (mocked)",
+      "ok": false,
+      "elapsed_s": 0.78,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/test_lexi_pipeline.py",
+      "stdout_tail": "\n========================================================================\n              LEXI PIPELINE \u2014 END-TO-END INTEGRATION TEST               \n========================================================================\nDatabase: /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/data/lexi.db\n\n========================================================================\n                      ENVIRONMENT CLEANUP & SETUP                       \n========================================================================\nCleared lexi.db at /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/data/lexi.db\nRow counts after cleanup: {'approvals': 0, 'holds': 0, 'audit_log': 0, 'proposals': 0, 'email_threads': 0}\n[PASS] All Lexi tables are empty.\n\n========================================================================\n                STEP 1: TRIAGE \u2014 INBOUND EMAIL INGESTION                \n========================================================================\nMock email payload:\n{\n  \"thread_id\": \"test-thread-xyz-789\",\n  \"subject\": \"Urgent: M&A Diligence Review & Dinner Strategy Session\",\n  \"sender\": \"strategic-investor@venturecapital.com\",\n  \"received_at\": \"2026-05-28 10:00:00\",\n  \"raw_body\": \"Hi Kory, we need to get together for a 60-minute session next week to finalize the diligence checkpoints and grab dinner. Let me know what days work best for you.\"\n}\n\n========================================================================\n                            TEST RUN FAILED                             \n========================================================================\nNameError: name 'os' is not defined\n",
+      "stderr_tail": "[lexi] Database verified: /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/data/lexi.db\n[lexi] Tables (8): approval_feedback, approvals, audit_log, email_threads, holds, kory_memory, proposals, scheduling_sessions\n[lexi] Indexes (11): idx_approval_feedback_created, idx_approval_feedback_proposal, idx_approvals_proposal_id, idx_audit_log_reference_id, idx_audit_log_timestamp, idx_email_threads_thread_id, idx_holds_proposal_id, idx_kory_memory_fact_key, idx_proposals_status, idx_proposals_thread_id, idx_scheduling_sessions_status\n[lexi] Schema initialization complete.\n"
+    },
+    {
+      "label": "Kory phase suite",
+      "ok": false,
+      "elapsed_s": 3.26,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/test_kory_phase_suite.py --skip-live-llm --ci",
+      "stdout_tail": "Initializing database...\n\n============================================================\nPhase 1 \u2014 Inbound ask-before-draft\n============================================================\n",
+      "stderr_tail": "t/app/orchestrator.py\", line 157, in handle_inbound_stream\n    return _handle_inbound_stream_locked(raw_email)\n  File \"/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/app/orchestrator.py\", line 249, in _handle_inbound_stream_locked\n    proposal_id = process_new_email(raw_email)\n  File \"/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/app/agents/triage_agent.py\", line 180, in process_new_email\n    _maybe_dispatch_asana_booking_reminder(\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        conn,\n        ^^^^^\n    ...<2 lines>...\n        intent=triage.intent,\n        ^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/app/agents/triage_agent.py\", line 486, in _maybe_dispatch_asana_booking_reminder\n    if os.getenv(\"LEXI_ASANA_AUTO_CREATE\", \"false\").lower() not in {\"1\", \"true\", \"yes\"}:\n       ^^\nNameError: name 'os' is not defined. Did you forget to import 'os'?\n"
+    },
+    {
+      "label": "Context + rate limits",
+      "ok": true,
+      "elapsed_s": 31.31,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/test_context_rate_limits.py",
+      "stdout_tail": "\n=== Context + rate-limit safeguards ===\n\n  [PASS] scheduling_session create \u2014 sess-ca0faee470dd\n  [PASS] scheduling_session persists context\n  [PASS] calendar busy_events capped at 80 \u2014 count=67\n  [PASS] search throttle enforces min interval \u2014 1.01s >= ~1.0s\n  [PASS] lexi_research_person in MCP server\n  [PASS] agent_instructions: scheduling_sessions + rate limits\n\nSummary: 6/6 passed\n\nReport: /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/docs/CONTEXT_RATE_LIMIT_REPORT.json\n\n",
+      "stderr_tail": ""
+    },
+    {
+      "label": "Long context + retention",
+      "ok": true,
+      "elapsed_s": 31.44,
+      "cmd": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/.venv/bin/python /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/scripts/test_long_context.py",
+      "stdout_tail": "\n=== Long-context + retention safeguards ===\n\n  [PASS] session context compacted under cap \u2014 len=46 cap=32000\n  [PASS] essential keys preserved after compaction\n  [PASS] calendar returns <=80 events \u2014 count=67\n  [PASS] db maintenance cycle \u2014 {'audit_deleted': 0, 'sessions_closed': 0, 'sessions_deleted': 0, 'raw_bodies_trimmed': 0, 'feedback_pruned': 0, 'vacuum\n  [PASS] db health snapshot \u2014 size=1.727MB\n  [PASS] LLM model set for production agent \u2014 claude-sonnet-4-6\n  [PASS] agent_instructions per-session limits\n\nSummary: 7/7 passed\nLimits: {\n  \"hermes_model_window_tokens\": \"~200000 (Claude Sonnet 4.6)\",\n  \"scheduling_session_max_chars\": 32000,\n  \"calendar_busy_events_max\": 80,\n  \"search_min_interval_sec\": 1.0,\n  \"recommended_max_tool_turns_per_chat\": 25,\n  \"llm_model\": \"claude-sonnet-4-6\"\n}\nReport: /Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/docs/LONG_CONTEXT_LIMITS.json\n\n",
+      "stderr_tail": ""
+    },
+    {
+      "label": "Unit tests (all)",
+      "ok": true,
+      "elapsed_s": 1.07
+    },
+    {
+      "label": "Graceful failure probes",
+      "ok": true,
+      "elapsed_s": 0.0
+    },
+    {
+      "label": "DB health",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "path": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/data/lexi.db",
+        "size_mb": 1.727,
+        "table_counts": {
+          "approval_feedback": 6,
+          "approvals": 0,
+          "audit_log": 0,
+          "email_threads": 0,
+          "holds": 0,
+          "kory_memory": 0,
+          "proposals": 0,
+          "scheduling_sessions": 22,
+          "sqlite_sequence": 0
+        },
+        "warnings": []
+      }
+    }
+  ],
+  "skipped_intentionally": [
+    "test_live_e2e.py (may place holds / send in non-UAT)",
+    "test_deploy_ready.py Asana live smoke",
+    "test_inbound_live.py",
+    "Teams/Hermes interactive UAT (Phase B)"
+  ]
+}

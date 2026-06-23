@@ -1,0 +1,22 @@
+# Copy relevant sections to ~/.hermes/config.yaml
+# Generate Lexi paths: .venv/bin/python scripts/setup_hermes_mcp.py
+
+platforms:
+  teams:
+    enabled: true
+    extra:
+      client_id: "YOUR_TEAMS_CLIENT_ID"
+      client_secret: "YOUR_TEAMS_CLIENT_SECRET"
+      tenant_id: "YOUR_TEAMS_TENANT_ID"
+      port: 3978
+
+mcp:
+  servers:
+    lexi-scheduling:
+      command: "/path/to/AI_Scheduling_Agent/.venv/bin/python"
+      args:
+        - "/path/to/AI_Scheduling_Agent/hermes_mcp_server.py"
+      env:
+        PYTHONPATH: "/path/to/AI_Scheduling_Agent"
+    # DO NOT add composio MCP here — causes 429 rate limits and token bloat.
+    # All Outlook/Asana actions go through lexi_* tools (Composio SDK behind Lexi).

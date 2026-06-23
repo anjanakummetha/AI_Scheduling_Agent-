@@ -1,0 +1,26 @@
+{
+  "tone_hints": [
+    "Preferred closing observed in sent mail: \"Let's Win,,\" then Kory.",
+    "Typical reply length: ~429 characters.",
+    "Common greeting: \"Hi Cheryl Blair,\"."
+  ],
+  "example_snippets": [
+    "Pilot loopback \u2014 should arrive at sandbox mailbox only.\n\nLet's Win,\nKory",
+    "Hi Cheryl Blair,\nI hope you are having a productive week.\nI've been thinking about your marketing approach lately.\nUsing social media more actively could really help you connect with your audience.\nEngaging content can attract new customers and keep current ones interested.\nConsider creating a content calendar to plan your posts.\nThis could streamline your efforts and improve your online presence.\nBest regards,\nKory IconfoundWMG",
+    "test\n\nLet's Win,\nKory",
+    "Hi Wyatt Lee,\nI wanted to share some thoughts on your recent business strategy.\nIt seems like you are doing great work, but there might be room for improvement.\nConsider focusing on customer feedback to refine your services.\nListening to your clients can lead to better products and happier customers.\nAlso, think about collaborating with other businesses to expand your reach.\nThese steps could help you achieve your goals more effectively.\nBest re\u2026",
+    "Hi Bohdan,\nI hope you are doing well.\nNetworking is a powerful tool in business.\nBuilding strong relationships can open doors to new opportunities.\nConsider attending industry events or joining local business groups.\nThese connections can lead to valuable partnerships and collaborations.\nInvesting time in networking can pay off in the long run.\n\nBest regards Kory IconfoundWMG"
+  ],
+  "greeting_samples": [
+    "Hi Cheryl Blair,",
+    "Hi Wyatt Lee,",
+    "Hi Bohdan,",
+    "Hi Russell Short,",
+    "Hi Nolan Sullivan,"
+  ],
+  "closing_counts": {
+    "Let's Win,": 4
+  },
+  "built_at_epoch": 1781737271.8329978,
+  "sample_count": 30
+}

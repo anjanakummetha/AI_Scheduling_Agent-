@@ -1,0 +1,75 @@
+{
+  "checks": [
+    {
+      "name": "LEXI_WRITE_MODE",
+      "status": "PASS",
+      "detail": "kory"
+    },
+    {
+      "name": "Read connection = Kory",
+      "status": "PASS",
+      "detail": "ca_qORrE-NzPib2"
+    },
+    {
+      "name": "Write connection = Kory (real recipient sends)",
+      "status": "PASS",
+      "detail": "ca_qORrE-NzPib2"
+    },
+    {
+      "name": "No email loopback",
+      "status": "PASS",
+      "detail": "loopback off \u2014 sends go to actual recipient after approve"
+    },
+    {
+      "name": "LEXI_DRY_RUN off",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "kory_approves_all",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "LEXI_REQUIRE_KORY_APPROVAL",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "auto_execute off",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "immediate_send off",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Kory inbox ingress (poll or webhook)",
+      "status": "PASS",
+      "detail": "webhook"
+    },
+    {
+      "name": "Composio configured",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Kory calendars visible",
+      "status": "PASS",
+      "detail": "4 calendars"
+    },
+    {
+      "name": "Primary calendar resolved (Kory Master Calendar (ALL))",
+      "status": "PASS",
+      "detail": "required for holds/events"
+    },
+    {
+      "name": "Secondary conflict calendars (optional)",
+      "status": "PASS",
+      "detail": "2/2 on account"
+    }
+  ],
+  "failed": 0
+}

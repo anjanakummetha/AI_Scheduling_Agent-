@@ -1,0 +1,100 @@
+{
+  "teams_cards_ready": true,
+  "conversation_id_prefix": "a:10r5wx4_HFGrAR8zvqEGJ87tpe",
+  "store_path": "/Users/anjanakummetha/Downloads/IFG 2026 Summer Internship/AI_Scheduling_Agent/data/teams_conversation.json",
+  "failed_count": 0,
+  "checks": [
+    {
+      "name": "LEXI_TEAMS_ENABLED (proactive cards from worker)",
+      "ok": true,
+      "detail": "set LEXI_TEAMS_ENABLED=true in .env for inbound email cards"
+    },
+    {
+      "name": "LEXI_TEAMS_TEXT_ONLY=false (Adaptive Cards)",
+      "ok": true,
+      "detail": "False"
+    },
+    {
+      "name": "TEAMS_CLIENT_ID",
+      "ok": true,
+      "detail": "f284770c..."
+    },
+    {
+      "name": "TEAMS_CLIENT_SECRET",
+      "ok": true,
+      "detail": "set"
+    },
+    {
+      "name": "TEAMS_TENANT_ID",
+      "ok": true,
+      "detail": "set"
+    },
+    {
+      "name": "TEAMS_ALLOWED_USERS",
+      "ok": true,
+      "detail": "1 user(s)"
+    },
+    {
+      "name": "Teams conversation registered",
+      "ok": true,
+      "detail": "a:10r5wx4_HFGrAR8zvqEGJ87tpe..."
+    },
+    {
+      "name": "teams_cards_ready",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "~/.hermes/.env exists",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Lexi MCP in ~/.hermes/config.yaml",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "agent_instructions.txt",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Production: LEXI_DRY_RUN off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Production: Kory writes unlocked",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Production: require Kory approval",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Production: auto_execute off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Production: immediate_send off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Bot Framework token",
+      "ok": true,
+      "detail": "token_len=1627"
+    },
+    {
+      "name": "Live ping to Teams DM",
+      "ok": true,
+      "detail": "message sent to registered conversation"
+    }
+  ],
+  "phase_b_chat_ready": true,
+  "note": "Hermes gateway must be running with Azure Bot endpoint pointed at :3978/api/messages for inbound Teams chat."
+}

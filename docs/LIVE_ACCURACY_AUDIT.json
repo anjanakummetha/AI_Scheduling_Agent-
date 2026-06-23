@@ -1,0 +1,146 @@
+{
+  "generated_at": "2026-06-11T14:28:29.734455+00:00",
+  "checks": [
+    {
+      "name": "rules.py Saturday entry exists",
+      "status": "PASS",
+      "detail": "False"
+    },
+    {
+      "name": "HARD_BLOCKS defined",
+      "status": "PASS",
+      "detail": "9 blocks"
+    },
+    {
+      "name": "Trainer block rejected by validators",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Read Kory inbox",
+      "status": "PASS",
+      "detail": "15 recent messages (log=None)"
+    },
+    {
+      "name": "Read Kory calendar 14d",
+      "status": "PASS",
+      "detail": "25 events (log=None)"
+    },
+    {
+      "name": "List Outlook calendars",
+      "status": "PASS",
+      "detail": "4 calendars"
+    },
+    {
+      "name": "Multi-calendar availability API",
+      "status": "PASS",
+      "detail": "consulted=6"
+    },
+    {
+      "name": "Unknown domains return timezone confidence=unknown",
+      "status": "PASS",
+      "detail": "8 unknown-domain senders (ask Kory before drafting times)"
+    },
+    {
+      "name": "Triage stops at ask (3)",
+      "status": "PASS",
+      "detail": "intent=internal_sync"
+    },
+    {
+      "name": "Triage stops at ask (4)",
+      "status": "PASS",
+      "detail": "intent=non_scheduling"
+    },
+    {
+      "name": "Triage stops at ask (5)",
+      "status": "PASS",
+      "detail": "intent=non_scheduling"
+    },
+    {
+      "name": "Triage stops at ask (6)",
+      "status": "PASS",
+      "detail": "intent=unknown"
+    },
+    {
+      "name": "Triage stops at ask (7)",
+      "status": "PASS",
+      "detail": "intent=unknown"
+    },
+    {
+      "name": "Mixed inbox triage",
+      "status": "PASS",
+      "detail": "scheduling=3 other=2"
+    },
+    {
+      "name": "Inbound reply queue readable",
+      "status": "PASS",
+      "detail": "5 awaiting prompt"
+    },
+    {
+      "name": "Kory approves all (no auto-send)",
+      "status": "PASS",
+      "detail": "live writes to sandbox"
+    },
+    {
+      "name": "Approval gate configured",
+      "status": "PASS",
+      "detail": "reject_decision / modify_and_approve_decision / lexi_update_proposal_draft"
+    },
+    {
+      "name": "Fallback documented: LLM fail",
+      "status": "PASS",
+      "detail": "LLM fail \u2192 engine_fallback slots (scheduler_agent)"
+    },
+    {
+      "name": "Fallback documented: Calendar Composio fail",
+      "status": "PASS",
+      "detail": "Calendar Composio fail \u2192 mock empty busy (risk: overbooking)"
+    },
+    {
+      "name": "Fallback documented: Scheduling fail",
+      "status": "PASS",
+      "detail": "Scheduling fail \u2192 general_fallback draft (inbound_reply)"
+    },
+    {
+      "name": "Fallback documented: General LLM fail",
+      "status": "PASS",
+      "detail": "General LLM fail \u2192 template_fallback reply"
+    },
+    {
+      "name": "Fallback documented: Kory reject",
+      "status": "PASS",
+      "detail": "Kory reject \u2192 reject_decision"
+    },
+    {
+      "name": "Fallback documented: Kory fix draft",
+      "status": "PASS",
+      "detail": "Kory fix draft \u2192 modify_and_approve / lexi_update_proposal_draft"
+    },
+    {
+      "name": "Saturday blocked",
+      "status": "PASS",
+      "detail": ""
+    }
+  ],
+  "bugs": [
+    {
+      "severity": "medium",
+      "area": "calendars",
+      "title": "Configured conflict calendars not found on account",
+      "detail": "4 of 6 missing \u2014 multi-calendar conflicts incomplete",
+      "evidence": [
+        "IFG Team",
+        "Kory/Heidi only",
+        "Deal Activities",
+        "Daily CEO Update"
+      ]
+    }
+  ],
+  "summary": {
+    "checks_pass": 24,
+    "checks_fail": 0,
+    "bugs": 1,
+    "critical": 0,
+    "high": 0
+  }
+}

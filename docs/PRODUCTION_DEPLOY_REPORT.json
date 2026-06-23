@@ -1,0 +1,114 @@
+{
+  "failed": 1,
+  "checks": [
+    {
+      "name": "LEXI_DRY_RUN off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "LEXI_WRITE_MODE=kory",
+      "ok": true,
+      "detail": "kory"
+    },
+    {
+      "name": "Kory outbound enabled",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Kory space writes enabled",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "kory_approves_all",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "LEXI_REQUIRE_KORY_APPROVAL",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "auto_execute off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "immediate_send off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Lexi + Kory Composio IDs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Teams enabled",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "delegation_only inbound",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "LEXI_WEBHOOK_PUBLIC_URL (HTTPS)",
+      "ok": false,
+      "detail": "set https://lexi.iconicfounders.com on VPS before Composio webhook"
+    },
+    {
+      "name": "Webhook ingress enabled",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Frequent poll off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "E2E staging (skipped \u2014 kory write mode sends real mail)",
+      "ok": true,
+      "detail": "run manually with LEXI_DRY_RUN=true if needed"
+    },
+    {
+      "name": "Approval safety",
+      "ok": true,
+      "detail": "ALL PASS"
+    },
+    {
+      "name": "Production cutover",
+      "ok": true,
+      "detail": "Summary: 14/14 passed"
+    },
+    {
+      "name": "Teams connection",
+      "ok": true,
+      "detail": "============================================================"
+    },
+    {
+      "name": "MCP tools",
+      "ok": true,
+      "detail": "Processing request of type CallToolRequest"
+    },
+    {
+      "name": "Phase suite (CI, no live send)",
+      "ok": true,
+      "detail": "[lexi] Schema initialization complete."
+    },
+    {
+      "name": "Mock pipeline",
+      "ok": true,
+      "detail": "[lexi] Schema initialization complete."
+    }
+  ],
+  "code_ready": true,
+  "infra_blockers": [
+    "LEXI_WEBHOOK_PUBLIC_URL (HTTPS)"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.2",
+  "id": "f284770c-60f5-4bb6-ae15-655baed26a6a",
+  "packageName": "com.iconicfounders.lexi",
+  "developer": {
+    "name": "Iconic Founders Group",
+    "websiteUrl": "https://www.iconicfounders.com",
+    "privacyUrl": "https://www.iconicfounders.com/privacy",
+    "termsOfUseUrl": "https://www.iconicfounders.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Lexi",
+    "full": "Lexi AI Scheduling Assistant"
+  },
+  "description": {
+    "short": "AI Chief of Staff for scheduling.",
+    "full": "Lexi manages scheduling, calendar holds, and meeting coordination directly within Teams."
+  },
+  "accentColor": "#FFFFFF",
+  "bots": [
+    {
+      "botId": "f284770c-60f5-4bb6-ae15-655baed26a6a",
+      "scopes": ["personal"],
+      "isNotificationOnly": false,
+      "supportsFiles": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

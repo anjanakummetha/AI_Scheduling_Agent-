@@ -2,10 +2,9 @@
 
 ## Verified Configuration
 
-- Hermes is configured through OpenRouter using `LLM_BASE_URL=https://openrouter.ai/api/v1`.
-- The configured model is `nousresearch/hermes-4-70b`.
-- Composio can create a session for `COMPOSIO_USER_ID=kory`.
-- Composio shows one active Outlook connected account for `kory`.
+- Hermes gateway: `provider: anthropic` in `~/.hermes/config.yaml` (e.g. `claude-opus-4-7`).
+- Lexi pipeline: `ANTHROPIC_API_KEY` in `.env` or `~/.hermes/.env` → `https://api.anthropic.com/v1` (OpenAI-compatible SDK).
+- Composio: `KORY_COMPOSIO_CONNECTION_ID` + `COMPOSIO_ENTITY_ID` for Kory's Outlook.
 
 ## Run The Dashboard
 

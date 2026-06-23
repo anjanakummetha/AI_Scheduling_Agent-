@@ -24,7 +24,7 @@ def main():
 
     # ── Validate environment ──────────────────────────────────
     api_key = os.getenv("COMPOSIO_API_KEY")
-    user_id = os.getenv("COMPOSIO_USER_ID", "kory")
+    connection_id = os.getenv("KORY_COMPOSIO_CONNECTION_ID", "").strip()
 
     if not api_key:
         print("\n  ERROR: COMPOSIO_API_KEY is missing from your .env file.")
@@ -33,14 +33,19 @@ def main():
         print("  3. Add it to the .env file: COMPOSIO_API_KEY=your_key_here")
         sys.exit(1)
 
-    print(f"\n  Connecting to Composio for user: {user_id}")
+    if not connection_id:
+        print("\n  ERROR: KORY_COMPOSIO_CONNECTION_ID is missing from your .env file.")
+        print("  Copy the connected account id from Composio dashboard → Connected Accounts.")
+        sys.exit(1)
+
+    print(f"\n  Connecting to Composio (connection_id={connection_id})")
     composio = Composio(api_key=api_key)
 
     # ── Step 1: Verify Microsoft 365 connection ───────────────
     print("\n  [1/3] Verifying Microsoft 365 connected account...")
     try:
-        session = composio.create(user_id=user_id)
-        print(f"  ✓ Composio session created successfully for '{user_id}'")
+        account = composio.connected_accounts.get(connection_id)
+        print(f"  ✓ Connected account resolved: {getattr(account, 'id', connection_id)}")
     except Exception as e:
         print(f"\n  ERROR: Could not create Composio session — {e}")
         print("  Make sure your Microsoft 365 account is connected in the Composio dashboard.")
@@ -57,11 +62,11 @@ def main():
         print("  Proceeding with trigger creation using default config...")
 
     # ── Step 3: Create the trigger ────────────────────────────
-    print(f"\n  [3/3] Creating OUTLOOK_MESSAGE_TRIGGER for user '{user_id}'...")
+    print(f"\n  [3/3] Creating OUTLOOK_MESSAGE_TRIGGER for connection '{connection_id}'...")
     try:
         trigger = composio.triggers.create(
             slug="OUTLOOK_MESSAGE_TRIGGER",
-            user_id=user_id,
+            connected_account_id=connection_id,
             trigger_config={},
         )
         print(f"\n  ✓ Trigger created successfully!")
@@ -81,11 +86,10 @@ def main():
     print("  SETUP COMPLETE")
     print("═" * 60)
     print("\n  Next steps:")
-    print("  1. Make sure Hermes is running (see README.md)")
-    print("  2. Run the agent:  python agent.py")
-    print("  3. Send a test email to Kory's Outlook inbox")
-    print("  4. Watch the agent analyze it and propose an action")
-    print("  5. Type 'y' to approve or 'n' to reject\n")
+    print("  1. Start Hermes: hermes gateway run --replace  (Lexi worker embeds in MCP)")
+    print("     Optional webhook: .venv/bin/python -m app.worker --webhook")
+    print("  2. Send a test email to Kory's Outlook inbox")
+    print("  3. Open the dashboard to review pending approvals\n")
 
 
 if __name__ == "__main__":

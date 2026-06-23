@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Initialize the unified Lexi scheduling database at data/lexi.db.
+
+Phase 1 schema: email_threads, proposals, holds, approvals, audit_log.
+
+Usage:
+    python scripts/init_lexi_db.py
+    .venv/bin/python scripts/init_lexi_db.py
+"""
+
+from __future__ import annotations
+
+import sqlite3
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+DATA_DIR = ROOT / "data"
+DB_PATH = DATA_DIR / "lexi.db"
+
+SCHEMA_SQL = """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS email_threads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL UNIQUE,
+    subject TEXT,
+    sender TEXT,
+    received_at TEXT,
+    raw_body TEXT
+);
+
+CREATE TABLE IF NOT EXISTS proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    intent_classification TEXT,
+    priority_tier TEXT,
+    rule_reasoning TEXT,
+    proposed_slots TEXT,
+    drafted_reply TEXT,
+    confidence_score REAL,
+    justification TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT,
+    FOREIGN KEY (thread_id) REFERENCES email_threads (thread_id)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS holds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id INTEGER NOT NULL,
+    event_id TEXT,
+    slot_start TEXT,
+    slot_end TEXT,
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (proposal_id) REFERENCES proposals (id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id INTEGER NOT NULL,
+    decision TEXT NOT NULL,
+    decision_source TEXT NOT NULL,
+    authorized_by TEXT,
+    modification_notes TEXT,
+    decided_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (proposal_id) REFERENCES proposals (id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    step_name TEXT NOT NULL,
+    reference_id TEXT,
+    log_level TEXT NOT NULL DEFAULT 'INFO',
+    message TEXT NOT NULL,
+    payload TEXT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_threads_thread_id
+    ON email_threads (thread_id);
+
+CREATE INDEX IF NOT EXISTS idx_proposals_status
+    ON proposals (status);
+
+CREATE INDEX IF NOT EXISTS idx_proposals_thread_id
+    ON proposals (thread_id);
+
+CREATE INDEX IF NOT EXISTS idx_holds_proposal_id
+    ON holds (proposal_id);
+
+CREATE INDEX IF NOT EXISTS idx_approvals_proposal_id
+    ON approvals (proposal_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_reference_id
+    ON audit_log (reference_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp
+    ON audit_log (timestamp);
+
+CREATE TABLE IF NOT EXISTS scheduling_sessions (
+    id TEXT PRIMARY KEY,
+    channel TEXT NOT NULL DEFAULT 'hermes',
+    status TEXT NOT NULL DEFAULT 'active',
+    context_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduling_sessions_status
+    ON scheduling_sessions (status);
+
+CREATE TRIGGER IF NOT EXISTS trg_proposals_set_updated_at
+AFTER UPDATE ON proposals
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE proposals
+    SET updated_at = datetime('now')
+    WHERE id = NEW.id;
+END;
+"""
+
+
+def _migrate_scheduling_sessions(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scheduling_sessions (
+            id TEXT PRIMARY KEY,
+            channel TEXT NOT NULL DEFAULT 'hermes',
+            status TEXT NOT NULL DEFAULT 'active',
+            context_json TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_scheduling_sessions_status
+        ON scheduling_sessions (status)
+        """
+    )
+
+
+def _migrate_proposal_metadata(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+    additions = {
+        "voice_mode": "TEXT NOT NULL DEFAULT 'kory'",
+        "send_channel": "TEXT NOT NULL DEFAULT 'kory'",
+        "is_delegation": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for name, ddl in additions.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE proposals ADD COLUMN {name} {ddl}")
+
+
+def _migrate_kory_memory(conn: sqlite3.Connection) -> None:
+    from app.storage.kory_memory import ensure_kory_memory_table
+
+    ensure_kory_memory_table(conn)
+
+
+def _migrate_holds_expires_at(conn: sqlite3.Connection) -> None:
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(holds)").fetchall()
+    }
+    if "expires_at" not in columns:
+        conn.execute("ALTER TABLE holds ADD COLUMN expires_at TEXT")
+
+
+def _migrate_approval_feedback(conn: sqlite3.Connection) -> None:
+    from app.storage.learning_log import ensure_approval_feedback_table
+
+    ensure_approval_feedback_table(conn)
+
+
+def init_lexi_db(db_path: Path = DB_PATH) -> None:
+    """Create data/lexi.db and apply the Lexi Phase 1 schema."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    existed_before = db_path.exists()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.executescript(SCHEMA_SQL)
+        _migrate_holds_expires_at(conn)
+        _migrate_scheduling_sessions(conn)
+        _migrate_proposal_metadata(conn)
+        _migrate_kory_memory(conn)
+        _migrate_approval_feedback(conn)
+        conn.commit()
+
+        tables = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+            ).fetchall()
+            if row[0] not in {"sqlite_sequence"}
+        ]
+        indexes = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+    action = "verified" if existed_before else "created"
+    print(f"[lexi] Database {action}: {db_path}", file=sys.stderr)
+    print(f"[lexi] Tables ({len(tables)}): {', '.join(tables)}", file=sys.stderr)
+    print(f"[lexi] Indexes ({len(indexes)}): {', '.join(indexes)}", file=sys.stderr)
+    print("[lexi] Schema initialization complete.", file=sys.stderr)
+
+
+def main() -> int:
+    try:
+        from app.config import settings
+
+        init_lexi_db(settings.lexi_database_path)
+    except sqlite3.Error as exc:
+        print(f"[lexi] ERROR: database initialization failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

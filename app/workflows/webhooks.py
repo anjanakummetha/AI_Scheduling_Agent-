@@ -1,84 +1,115 @@
-"""Composio webhook processing."""
+"""Composio webhook ingress for the Lexi orchestrator queue."""
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
-from app.integrations.outlook_email import get_message, normalize_message
-from app.storage.decision_store import add_audit_event, email_exists
-from app.workflows.inbound_email import process_inbound_email
+from app.orchestrator import composio_webhook_to_lexi_email, enqueue_inbound
+from app.storage.lexi_db import get_lexi_connection
 
+logger = logging.getLogger(__name__)
 
 OUTLOOK_MESSAGE_TRIGGER = "OUTLOOK_MESSAGE_TRIGGER"
 
 
-def process_composio_webhook(payload: dict[str, Any]) -> int | None:
+def accept_composio_webhook(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate a Composio trigger payload and enqueue Lexi inbound processing.
+
+    Returns a JSON-serializable acceptance envelope suitable for HTTP 202 responses.
+    """
     event_type = payload.get("type")
     metadata = payload.get("metadata") or {}
     trigger_slug = metadata.get("trigger_slug")
 
     if event_type != "composio.trigger.message":
-        add_audit_event(
-            "webhook.ignored",
-            f"Ignored non-trigger Composio webhook event: {event_type}",
-            metadata=payload,
-        )
-        return None
+        result = {
+            "ok": True,
+            "queued": False,
+            "ignored": True,
+            "reason": f"unsupported_event:{event_type}",
+        }
+        _audit_webhook("INFO", "Webhook ignored (unsupported event type).", result, payload)
+        return result
 
     if trigger_slug != OUTLOOK_MESSAGE_TRIGGER:
-        add_audit_event(
-            "webhook.ignored",
-            f"Ignored unsupported trigger: {trigger_slug}",
-            metadata=payload,
-        )
-        return None
+        result = {
+            "ok": True,
+            "queued": False,
+            "ignored": True,
+            "reason": f"unsupported_trigger:{trigger_slug}",
+        }
+        _audit_webhook("INFO", "Webhook ignored (unsupported trigger slug).", result, payload)
+        return result
 
-    data = payload.get("data") or {}
-    message_id = _extract_message_id(data)
-    if not message_id:
-        add_audit_event(
-            "webhook.error",
-            "OUTLOOK_MESSAGE_TRIGGER payload did not include a message ID.",
-            metadata=payload,
-        )
-        return None
-    if email_exists(message_id):
-        add_audit_event(
-            "webhook.duplicate",
-            "Outlook message trigger skipped because message was already processed.",
-            metadata={"message_id": message_id},
-        )
-        return None
+    try:
+        lexi_email = composio_webhook_to_lexi_email(payload)
+    except Exception as exc:
+        logger.exception("Composio webhook normalization failed.")
+        result = {
+            "ok": False,
+            "queued": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        _audit_webhook("ERROR", "Webhook normalization raised an exception.", result, payload)
+        return result
 
-    message, log_id = get_message(message_id)
-    email = normalize_message(message, {"message_id": message_id, "webhook": payload})
-    decision_id = process_inbound_email(email)
-    add_audit_event(
-        "webhook.message_processed",
-        "Outlook message trigger fetched and processed.",
-        decision_id,
-        {"message_id": message_id},
-        log_id,
-    )
-    return decision_id
+    if not lexi_email:
+        result = {
+            "ok": False,
+            "queued": False,
+            "error": "normalization_failed",
+        }
+        _audit_webhook("ERROR", "Webhook payload could not be normalized to Lexi email.", result, payload)
+        return result
+
+    try:
+        enqueue_inbound(lexi_email)
+    except Exception as exc:
+        logger.exception("Failed to enqueue Lexi inbound email.")
+        result = {
+            "ok": False,
+            "queued": False,
+            "thread_id": lexi_email.get("thread_id"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        _audit_webhook("ERROR", "Failed to enqueue Lexi inbound email.", result, payload)
+        return result
+
+    result = {
+        "ok": True,
+        "queued": True,
+        "thread_id": lexi_email.get("thread_id"),
+    }
+    _audit_webhook("INFO", "Composio webhook accepted and queued for Lexi orchestrator.", result, payload)
+    return result
 
 
-def _extract_message_id(data: dict[str, Any]) -> str | None:
-    for key in ("message_id", "messageId", "id", "resource_id", "resourceId"):
-        value = data.get(key)
-        if isinstance(value, str) and value:
-            return value
-
-    message = data.get("message")
-    if isinstance(message, dict):
-        return _extract_message_id(message)
-
-    resource_data = data.get("resourceData")
-    if isinstance(resource_data, dict):
-        return _extract_message_id(resource_data)
-
-    value = data.get("value")
-    if isinstance(value, list) and value and isinstance(value[0], dict):
-        return _extract_message_id(value[0])
-
-    return None
+def _audit_webhook(
+    level: str,
+    message: str,
+    result: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    try:
+        with get_lexi_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_log (step_name, reference_id, log_level, message, payload)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    "webhook_ingress",
+                    str(result.get("thread_id") or "unknown"),
+                    level,
+                    message,
+                    json.dumps(
+                        {"result": result, "webhook": payload},
+                        default=str,
+                    ),
+                ),
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("Failed to write Lexi webhook audit log entry.")

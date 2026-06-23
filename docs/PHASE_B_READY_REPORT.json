@@ -1,0 +1,97 @@
+{
+  "generated_at": "2026-06-17T20:10:03.259848+00:00",
+  "ready_for_phase_b": false,
+  "checks": [
+    {
+      "name": "LEXI_DRY_RUN",
+      "ok": false,
+      "detail": "blocks all writes during UAT"
+    },
+    {
+      "name": "LEXI_KORY_SPACE_READ_ONLY",
+      "ok": true,
+      "detail": "Kory mailbox/calendar protected"
+    },
+    {
+      "name": "LEXI_KORY_OUTBOUND_BLOCKED",
+      "ok": true,
+      "detail": "no send from Kory"
+    },
+    {
+      "name": "LEXI_WRITE_MODE=sandbox (recommended)",
+      "ok": true,
+      "detail": "mode=sandbox dry_run=False"
+    },
+    {
+      "name": "SANDBOX_EMAIL_LOOPBACK",
+      "ok": false,
+      "detail": "loopback=False"
+    },
+    {
+      "name": "LEXI_DEFAULT_SEND_CHANNEL=kory",
+      "ok": false,
+      "detail": "lexi@ not configured"
+    },
+    {
+      "name": "No LEXI_COMPOSIO_CONNECTION_ID",
+      "ok": false,
+      "detail": "lexi mailbox off"
+    },
+    {
+      "name": "LLM_MODEL",
+      "ok": true,
+      "detail": "claude-sonnet-4-6"
+    },
+    {
+      "name": "delegation_only inbound",
+      "ok": true,
+      "detail": "delegation_only"
+    },
+    {
+      "name": "kory read connection",
+      "ok": true,
+      "detail": "set"
+    },
+    {
+      "name": "LEXI_TEAMS_ENABLED",
+      "ok": true,
+      "detail": "proactive Adaptive Cards"
+    },
+    {
+      "name": "scripts/verify_read_only_deploy.py",
+      "ok": false,
+      "detail": "automated suite"
+    },
+    {
+      "name": "scripts/test_phase_a_local.py",
+      "ok": false,
+      "detail": "automated suite"
+    },
+    {
+      "name": "scripts/test_long_context.py",
+      "ok": true,
+      "detail": "automated suite"
+    },
+    {
+      "name": "scripts/verify_calendars_read.py",
+      "ok": false,
+      "detail": "automated suite"
+    },
+    {
+      "name": "scripts/verify_asana_board.py",
+      "ok": true,
+      "detail": "automated suite"
+    },
+    {
+      "name": "scripts/test_context_rate_limits.py",
+      "ok": true,
+      "detail": "automated suite"
+    },
+    {
+      "name": "scripts/verify_teams_connection.py",
+      "ok": false,
+      "detail": "automated suite"
+    }
+  ],
+  "failed_count": 8
+}

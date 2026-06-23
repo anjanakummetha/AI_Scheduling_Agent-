@@ -1,8 +1,11 @@
-"""Local Composio trigger listener for demo runs without ngrok.
+#!/usr/bin/env python3
+"""Local Composio trigger listener that feeds the Lexi orchestrator directly.
 
-Production should use the FastAPI `/webhooks/composio` endpoint. This script is
-only a local fallback for receiving Outlook trigger events over the Composio SDK
-websocket subscription.
+Production ingress should use the FastAPI endpoint:
+    POST /webhooks/composio
+
+This script is a local fallback for Composio trigger websocket events and inbox polling
+without running the full FastAPI server.
 """
 
 from __future__ import annotations
@@ -19,13 +22,12 @@ from dotenv import load_dotenv
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+    sys.path.insert(0, str(ROOT))
 
-from app.integrations.composio_client import execute_tool
+from app.integrations.composio_client import execute_tool, require_composio_connection_id
 from app.integrations.outlook_email import get_message, normalize_message
-from app.storage.decision_store import email_exists
-from app.workflows.inbound_email import process_inbound_email
-from app.workflows.webhooks import OUTLOOK_MESSAGE_TRIGGER, process_composio_webhook
+from app.orchestrator import composio_webhook_to_lexi_email, handle_inbound_stream
+from app.workflows.webhooks import OUTLOOK_MESSAGE_TRIGGER
 
 
 PROCESSING_LOCK = threading.Lock()
@@ -34,18 +36,19 @@ PROCESSING_LOCK = threading.Lock()
 def main() -> None:
     load_dotenv(".env")
     api_key = os.getenv("COMPOSIO_API_KEY")
-    user_id = os.getenv("COMPOSIO_USER_ID", "kory")
+    connection_id = require_composio_connection_id()
+    user_id = os.getenv("COMPOSIO_ENTITY_ID", "").strip() or connection_id
     started_at = datetime.now(timezone.utc)
     if not api_key:
         raise SystemExit("COMPOSIO_API_KEY is missing.")
 
-    print(f"Connecting to Composio trigger stream for user_id={user_id}...", flush=True)
+    print(f"Connecting to Composio trigger stream for connection_id={connection_id}...", flush=True)
     composio = Composio(api_key=api_key)
     listener = composio.triggers.subscribe(timeout=30.0)
-    print("Composio trigger stream connected.", flush=True)
+    print("Composio trigger stream connected (Lexi ingress).", flush=True)
 
     @listener.handle()
-    def on_any_trigger(event):
+    def on_any_trigger(event: dict[str, Any]) -> None:
         raw_payload = event.get("original_payload")
         if isinstance(raw_payload, dict) and raw_payload.get("type") == "composio.trigger.message":
             trigger_slug = (raw_payload.get("metadata") or {}).get("trigger_slug")
@@ -54,9 +57,7 @@ def main() -> None:
                 f"trigger_slug={trigger_slug} user_id={(raw_payload.get('metadata') or {}).get('user_id')}",
                 flush=True,
             )
-            with PROCESSING_LOCK:
-                decision_id = process_composio_webhook(raw_payload)
-            print(f"Processed raw Outlook trigger into decision_id={decision_id}", flush=True)
+            _process_trigger_payload(raw_payload)
             return
 
         print(
@@ -77,12 +78,10 @@ def main() -> None:
             },
             "data": event.get("payload", {}),
         }
-        with PROCESSING_LOCK:
-            decision_id = process_composio_webhook(payload)
-        print(f"Processed Outlook trigger into decision_id={decision_id}", flush=True)
+        _process_trigger_payload(payload)
 
     print(f"Listening for {OUTLOOK_MESSAGE_TRIGGER} events for user_id={user_id}.", flush=True)
-    print("Also polling inbox for new messages as a local demo fallback.", flush=True)
+    print("Also polling inbox for new messages as a local Lexi fallback.", flush=True)
     print("Leave this running while sending demo Outlook emails. Press Ctrl+C to stop.", flush=True)
     try:
         while listener.is_alive() and not listener.has_errored():
@@ -91,6 +90,22 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nListener stopped.")
         listener.stop()
+
+
+def _process_trigger_payload(payload: dict[str, Any]) -> None:
+    with PROCESSING_LOCK:
+        try:
+            raw_email = composio_webhook_to_lexi_email(payload)
+            if not raw_email:
+                print("Skipped trigger: could not normalize payload for Lexi.", flush=True)
+                return
+            result = handle_inbound_stream(raw_email)
+            print(f"Lexi processed trigger: {result}", flush=True)
+        except Exception as exc:
+            print(
+                f"Lexi trigger processing failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
 
 
 def _poll_recent_inbox(started_at: datetime) -> None:
@@ -107,32 +122,55 @@ def _poll_recent_inbox(started_at: datetime) -> None:
         )
         messages = _extract_messages(result["data"])
         for message in reversed(messages):
-            message_id = message.get("id")
-            if not message_id or email_exists(message_id):
+            message_id = str(message.get("id") or "").strip()
+            if not message_id:
                 continue
 
-            # Process any unprocessed message in the recent inbox window, not only
-            # mail received after this listener started (avoids missing emails sent
-            # just before a restart).
+            subject_preview = str(message.get("subject") or "")
+            if os.getenv("LEXI_LOCAL_MODE", "").strip().lower() in {"1", "true", "yes"}:
+                if "test" not in subject_preview.lower():
+                    continue
+
+            from app.orchestrator import _thread_already_ingested
+
+            if _thread_already_ingested(message_id):
+                continue
+
             received_at = _parse_received_at(message.get("receivedDateTime"))
             poll_window_start = started_at - timedelta(hours=24)
             if received_at and received_at < poll_window_start:
                 continue
 
             with PROCESSING_LOCK:
-                if email_exists(message_id):
-                    continue
-                full_message, _ = get_message(message_id)
-                email = normalize_message(
-                    full_message,
-                    {"source": "local_inbox_poll", "message_id": message_id},
-                )
-                decision_id = process_inbound_email(email)
-            print(
-                "Polled new Outlook inbox message into "
-                f"decision_id={decision_id} subject={email['subject']}",
-                flush=True,
-            )
+                try:
+                    full_message, _ = get_message(message_id)
+                    normalized = normalize_message(
+                        full_message,
+                        {"source": "local_inbox_poll", "message_id": message_id},
+                    )
+                    raw_email = {
+                        "thread_id": message_id,
+                        "subject": normalized["subject"],
+                        "sender": normalized["sender_email"],
+                        "received_at": normalized.get("received_at") or "",
+                        "raw_body": normalized["body"],
+                    }
+                    result = handle_inbound_stream(raw_email)
+                    if result.get("skipped"):
+                        continue
+                    print(
+                        "Polled new Outlook inbox message into Lexi: "
+                        f"proposal_id={result.get('proposal_id')} "
+                        f"status={result.get('final_status')} "
+                        f"subject={normalized['subject']}",
+                        flush=True,
+                    )
+                except Exception as exc:
+                    print(
+                        f"Lexi inbox poll failed for message {message_id}: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
     except Exception as exc:
         print(f"Inbox poll failed: {type(exc).__name__}: {exc}", flush=True)
 

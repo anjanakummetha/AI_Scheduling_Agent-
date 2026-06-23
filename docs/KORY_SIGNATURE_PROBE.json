@@ -1,0 +1,92 @@
+{
+  "messages_checked": 5,
+  "with_rich_signature_markers": 0,
+  "note": "API sends from Lexi use plain text (Let's Win, / Kory). If hits are high here, Outlook added signature on send. Lexi does not inject the HTML/image block programmatically.",
+  "samples": [
+    {
+      "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEJAAAz1opVsp0OQIyLOLZDmMP4AAElnu8hAAA=",
+      "subject": "Email Marketing Optimization Advice",
+      "sentDateTime": "2026-06-16T19:05:56Z",
+      "signature_hits": {
+        "iconic founders": false,
+        "preserving legacy": false,
+        "the turn podcast": false,
+        "ceo title": false,
+        "phone": false,
+        "iconicfounders.com": false,
+        "html image": false
+      },
+      "hit_count": 0,
+      "has_html_image": false,
+      "body_preview": "<html><head>\r <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body><p>Rev Hub <br></p><p>I'm not interested in improving my email marketing campaigns at the moment. Thank you for the offer, but it's not a priority for me right now.</p><br><p>Best regards, Kory IconfoundWMG</p><br><p></p></body></html>"
+    },
+    {
+      "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEJAAAz1opVsp0OQIyLOLZDmMP4AAElnu8gAAA=",
+      "subject": "Improving Email Deliverability",
+      "sentDateTime": "2026-06-16T18:54:03Z",
+      "signature_hits": {
+        "iconic founders": false,
+        "preserving legacy": false,
+        "the turn podcast": false,
+        "ceo title": false,
+        "phone": false,
+        "iconicfounders.com": false,
+        "html image": false
+      },
+      "hit_count": 0,
+      "has_html_image": false,
+      "body_preview": "<html><head>\r <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body><p>Ben Joers <br>I think my colleague can help with this, Kory IconfoundWMG.</p><p>Can I connect you with them? <br></p></body></html>"
+    },
+    {
+      "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEJAAAz1opVsp0OQIyLOLZDmMP4AAElnu8fAAA=",
+      "subject": "Know Your Audience",
+      "sentDateTime": "2026-06-16T18:48:24Z",
+      "signature_hits": {
+        "iconic founders": false,
+        "preserving legacy": false,
+        "the turn podcast": false,
+        "ceo title": false,
+        "phone": false,
+        "iconicfounders.com": false,
+        "html image": false
+      },
+      "hit_count": 0,
+      "has_html_image": false,
+      "body_preview": "<html><head>\r <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body><p></p><p>Hi Volodymyr,</p><p>Understanding your audience is key to effective marketing.</p><p>Take the time to research their needs and preferences.</p><p>This will allow you to tailor your messages and offers.</p><p>Engage with them through surveys or social media.</p><p>Listening to their feedback can "
+    },
+    {
+      "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEJAAAz1opVsp0OQIyLOLZDmMP4AAElnu8eAAA=",
+      "subject": "The Power of Networking",
+      "sentDateTime": "2026-06-16T18:44:27Z",
+      "signature_hits": {
+        "iconic founders": false,
+        "preserving legacy": false,
+        "the turn podcast": false,
+        "ceo title": false,
+        "phone": false,
+        "iconicfounders.com": false,
+        "html image": false
+      },
+      "hit_count": 0,
+      "has_html_image": false,
+      "body_preview": "<html><head>\r <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body><p></p><p>Hi Leo Harrison,</p><p>Networking is a powerful tool in business.</p><p>Building strong relationships can open many doors for you.</p><p>Make it a point to connect with others in your industry.</p><p>Attend events, join groups, and engage on social media.</p><p>These connections can lead to new "
+    },
+    {
+      "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEJAAAz1opVsp0OQIyLOLZDmMP4AAElnu8dAAA=",
+      "subject": "Boosting Team Productivity",
+      "sentDateTime": "2026-06-16T18:37:40Z",
+      "signature_hits": {
+        "iconic founders": false,
+        "preserving legacy": false,
+        "the turn podcast": false,
+        "ceo title": false,
+        "phone": false,
+        "iconicfounders.com": false,
+        "html image": false
+      },
+      "hit_count": 0,
+      "has_html_image": false,
+      "body_preview": "<html><head>\r <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body><p>Hi Clarence Sullivan,</p><p>I've been thinking about your team's productivity.</p><p>Setting clear goals can help everyone stay focused.</p><p>Consider using project management tools to track progress.</p><p>Encouraging breaks can also boost overall efficiency.</p><p>Recognizing achievements can motiva"
+    }
+  ]
+}

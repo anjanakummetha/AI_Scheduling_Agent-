@@ -1,0 +1,13 @@
+{
+  "ingress": {
+    "mode": "webhook_primary_backup_poll",
+    "detail": "webhook + backup inbox list every 30m",
+    "webhook_enabled": true,
+    "poll_outlook": false,
+    "backup_poll_minutes": 30,
+    "webhook_public_url": null,
+    "webhook_path": "/webhooks/composio"
+  },
+  "checks_passed": 5,
+  "failed": 1
+}

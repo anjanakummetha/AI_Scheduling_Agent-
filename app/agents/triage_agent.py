@@ -1,0 +1,567 @@
+"""Lexi Phase 2: inbound email triage, classification, and proposal staging."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import json
+import os
+import re
+import sqlite3
+import time
+import traceback
+from typing import Any
+
+from app.config import settings
+from app.llm.hermes_client import get_hermes_client
+from app.rules.rule_engine import is_priority_contact, load_rules
+from app.storage.lexi_db import get_lexi_connection
+
+TRIAGE_STATUS = "pending_triage"
+AWAITING_REPLY_PROMPT = "awaiting_reply_prompt"
+
+VALID_INTENTS = frozenset(
+    {
+        "board_meeting",
+        "dinner_request",
+        "lunch_request",
+        "pitch",
+        "internal_sync",
+        "coffee",
+        "happy_hour",
+        "reschedule",
+        "cancellation",
+        "delegation",
+        "non_scheduling",
+        "unknown",
+    }
+)
+VALID_PRIORITIES = frozenset({"high", "medium", "low"})
+NON_SCHEDULING_INTENTS = frozenset({"non_scheduling"})
+
+PRIORITY_KEYWORDS = (
+    "investor",
+    "term sheet",
+    "diligence",
+    "board meeting",
+    "ic prep",
+    "acquisition",
+    "loi",
+    "portfolio company",
+)
+
+PRIORITY_EMAIL_DOMAINS = (
+    "@iconicfounders.com",
+    "@ifg.vc",
+)
+
+TRIAGE_SYSTEM_PROMPT = """You are Lexi, an executive scheduling triage engine for a CEO inbox.
+Analyze the inbound email subject and body.
+
+Return ONLY a single valid JSON object with exactly these keys:
+- intent: string (e.g. board_meeting, dinner_request, lunch_request, pitch, internal_sync, coffee, happy_hour, reschedule, cancellation, delegation, non_scheduling, unknown)
+- priority: string, exactly one of high, medium, low
+- confidence_score: float between 0.0 and 1.0
+- justification: string, one sentence explaining intent and priority
+
+Do not include markdown fences or any text outside the JSON object."""
+
+
+@dataclass(frozen=True)
+class TriageResult:
+    intent: str
+    priority: str
+    confidence_score: float
+    justification: str
+    source: str = "llm"
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def process_new_email(raw_email: dict[str, Any]) -> int | None:
+    """Parse an inbound email, triage via LLM + rules, persist proposal, audit.
+
+    Returns proposal id for every inbound email (status awaiting_reply_prompt).
+    Hermes/Teams asks Kory whether to draft a reply before scheduling or sending.
+    """
+    started = time.perf_counter()
+    normalized = _normalize_raw_email(raw_email)
+    thread_id = normalized["thread_id"]
+
+    with get_lexi_connection() as conn:
+        llm_error: str | None = None
+        llm_traceback: str | None = None
+
+        try:
+            triage = _call_llm_triage(normalized["subject"], normalized["raw_body"])
+        except Exception as exc:
+            llm_error = f"{type(exc).__name__}: {exc}"
+            llm_traceback = traceback.format_exc()
+            triage = _fallback_triage(
+                llm_error,
+                subject=normalized["subject"],
+                body=normalized["raw_body"],
+            )
+
+        _ensure_thread(conn, normalized)
+        final_priority, rule_reasoning = _apply_rule_checklist(
+            sender=normalized["sender"],
+            subject=normalized["subject"],
+            body=normalized["raw_body"],
+            triage=triage,
+        )
+
+        from app.agents.inbound_filter import triage_adjustments_for_sender_subject
+
+        adjusted_intent, adjusted_priority = triage_adjustments_for_sender_subject(
+            sender=normalized["sender"],
+            subject=normalized["subject"],
+            body=normalized["raw_body"],
+            intent=triage.intent,
+            priority=final_priority,
+        )
+        if adjusted_intent != triage.intent or adjusted_priority != final_priority:
+            triage = TriageResult(
+                intent=adjusted_intent,
+                priority=adjusted_priority,
+                confidence_score=triage.confidence_score,
+                justification=(
+                    f"{triage.justification} (adjusted: newsletter/low-signal filter.)"
+                ),
+                source=triage.source,
+            )
+            final_priority = adjusted_priority
+
+        proposal_id = _insert_proposal(
+            conn,
+            thread_id=thread_id,
+            triage=triage,
+            final_priority=final_priority,
+            rule_reasoning=rule_reasoning,
+        )
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+
+        if llm_error:
+            _insert_audit_log(
+                conn,
+                step_name="triage_detection",
+                reference_id=thread_id,
+                log_level="ERROR",
+                message="LLM triage failed; stored safe defaults on proposal.",
+                payload={
+                    "thread_id": thread_id,
+                    "proposal_id": proposal_id,
+                    "duration_ms": duration_ms,
+                    "intent": triage.intent,
+                    "priority": final_priority,
+                    "error": llm_error,
+                    "traceback": llm_traceback,
+                },
+            )
+        else:
+            _insert_audit_log(
+                conn,
+                step_name="triage_detection",
+                reference_id=thread_id,
+                log_level="INFO",
+                message="Triage completed successfully.",
+                payload={
+                    "thread_id": thread_id,
+                    "proposal_id": proposal_id,
+                    "duration_ms": duration_ms,
+                    "intent": triage.intent,
+                    "priority": final_priority,
+                    "confidence_score": triage.confidence_score,
+                    "justification": triage.justification,
+                    "triage_source": triage.source,
+                    "rule_reasoning": rule_reasoning,
+                },
+            )
+
+        _maybe_dispatch_asana_booking_reminder(
+            conn,
+            normalized=normalized,
+            proposal_id=proposal_id,
+            intent=triage.intent,
+        )
+
+        conn.commit()
+        return proposal_id
+
+
+def _normalize_raw_email(raw_email: dict[str, Any]) -> dict[str, str]:
+    thread_id = str(raw_email.get("thread_id") or raw_email.get("outlook_message_id") or "").strip()
+    if not thread_id:
+        raise ValueError("raw_email must include thread_id or outlook_message_id")
+
+    sender = str(
+        raw_email.get("sender")
+        or raw_email.get("sender_email")
+        or raw_email.get("from")
+        or ""
+    ).strip()
+    subject = str(raw_email.get("subject") or "").strip()
+    received_at = str(raw_email.get("received_at") or "").strip()
+    raw_body = str(raw_email.get("raw_body") or raw_email.get("body") or "").strip()
+    conversation_id = str(raw_email.get("conversation_id") or "").strip()
+    message_id = str(raw_email.get("message_id") or thread_id).strip()
+
+    if conversation_id:
+        from app.integrations.outlook_thread import fetch_conversation_context
+
+        prior = fetch_conversation_context(
+            conversation_id,
+            exclude_message_id=message_id,
+            max_messages=3,
+        )
+        if prior:
+            raw_body = f"{raw_body}\n\n[Prior messages in this email chain]\n{prior}"
+
+    return {
+        "thread_id": thread_id,
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "subject": subject,
+        "sender": sender,
+        "received_at": received_at,
+        "raw_body": raw_body,
+    }
+
+
+def _ensure_thread(conn: sqlite3.Connection, email: dict[str, str]) -> None:
+    existing = conn.execute(
+        "SELECT 1 FROM email_threads WHERE thread_id = ? LIMIT 1",
+        (email["thread_id"],),
+    ).fetchone()
+    if existing:
+        return
+
+    conn.execute(
+        """
+        INSERT INTO email_threads (thread_id, subject, sender, received_at, raw_body)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            email["thread_id"],
+            email["subject"],
+            email["sender"],
+            email["received_at"] or None,
+            email["raw_body"],
+        ),
+    )
+
+
+def _call_llm_triage(subject: str, body: str) -> TriageResult:
+    client = get_hermes_client()
+    user_content = json.dumps(
+        {"subject": subject, "body": body},
+        ensure_ascii=False,
+    )
+    response = client.chat.completions.create(
+        model=settings.llm_model,
+        messages=[
+            {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.1,
+    )
+    content = response.choices[0].message.content or ""
+    payload = _parse_json_object(content)
+    return _coerce_triage_result(payload, source="llm")
+
+
+def _infer_intent_from_text(subject: str, body: str) -> str:
+    """Keyword heuristic when the LLM is unavailable."""
+    combined = f"{subject}\n{body}".lower()
+    if any(w in combined for w in ("unsubscribe", "newsletter", "no longer wish")):
+        return "non_scheduling"
+    if "dinner" in combined:
+        return "dinner_request"
+    if "lunch" in combined:
+        return "lunch_request"
+    if "coffee" in combined:
+        return "coffee"
+    if any(w in combined for w in ("reschedule", "move our meeting", "different time")):
+        return "reschedule"
+    if any(w in combined for w in ("cancel", "can't make it", "cannot make it")):
+        return "cancellation"
+    if any(
+        w in combined
+        for w in ("meet", "meeting", "sync", "call", "schedule", "availability", "calendar")
+    ):
+        return "pitch"
+    return "unknown"
+
+
+def _fallback_triage(reason: str, *, subject: str = "", body: str = "") -> TriageResult:
+    intent = _infer_intent_from_text(subject, body)
+    if intent == "non_scheduling":
+        return TriageResult(
+            intent="non_scheduling",
+            priority="low",
+            confidence_score=0.0,
+            justification=f"LLM triage unavailable; classified as non_scheduling ({reason}).",
+            source="fallback",
+        )
+    return TriageResult(
+        intent=intent,
+        priority="medium",
+        confidence_score=0.45 if intent != "unknown" else 0.0,
+        justification=(
+            f"LLM triage unavailable; keyword heuristic intent={intent} ({reason})."
+            if intent != "unknown"
+            else f"LLM triage unavailable; safe defaults applied ({reason})."
+        ),
+        source="fallback",
+    )
+
+
+def _coerce_triage_result(payload: dict[str, Any], *, source: str) -> TriageResult:
+    intent = str(payload.get("intent", "unknown")).strip().lower().replace(" ", "_")
+    if intent not in VALID_INTENTS:
+        intent = "unknown"
+
+    priority = str(payload.get("priority", "medium")).strip().lower()
+    if priority not in VALID_PRIORITIES:
+        priority = "medium"
+
+    try:
+        confidence = float(payload.get("confidence_score", 0.5))
+    except (TypeError, ValueError):
+        confidence = 0.5
+    confidence = max(0.0, min(1.0, confidence))
+
+    justification = str(payload.get("justification", "")).strip()
+    if not justification:
+        justification = "Classification produced with partial model output."
+
+    return TriageResult(
+        intent=intent,
+        priority=priority,
+        confidence_score=confidence,
+        justification=justification,
+        source=source,
+    )
+
+
+def _parse_json_object(content: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+        if not match:
+            raise ValueError("LLM response did not contain valid JSON") from None
+        parsed = json.loads(match.group(0))
+
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM JSON root must be an object")
+    return parsed
+
+
+def _apply_rule_checklist(
+    *,
+    sender: str,
+    subject: str,
+    body: str,
+    triage: TriageResult,
+) -> tuple[str, dict[str, Any]]:
+    priority = triage.priority
+    rules_applied: list[dict[str, str]] = []
+    combined = f"{subject}\n{body}".lower()
+    sender_lower = sender.lower()
+
+    if is_priority_contact(sender):
+        if priority != "high":
+            rules_applied.append(
+                {
+                    "rule": "priority_contacts.yaml",
+                    "match": "sender_email",
+                    "effect": f"{priority} -> high",
+                }
+            )
+        priority = "high"
+
+    for domain in PRIORITY_EMAIL_DOMAINS:
+        if domain in sender_lower:
+            if priority != "high":
+                rules_applied.append(
+                    {
+                        "rule": "priority_domain",
+                        "match": domain,
+                        "effect": f"{priority} -> high",
+                    }
+                )
+            priority = "high"
+            break
+
+    for keyword in PRIORITY_KEYWORDS:
+        if keyword in combined:
+            bumped = _bump_priority(priority)
+            if bumped != priority:
+                rules_applied.append(
+                    {
+                        "rule": "investor_keyword",
+                        "match": keyword,
+                        "effect": f"{priority} -> {bumped}",
+                    }
+                )
+            priority = bumped
+
+    rules_snapshot = {
+        "llm": triage.as_dict(),
+        "rules_applied": rules_applied,
+        "final_priority": priority,
+        "priority_contacts_config": load_rules().get("priority_contacts", []),
+    }
+    return priority, rules_snapshot
+
+
+def _bump_priority(current: str) -> str:
+    order = ("low", "medium", "high")
+    try:
+        index = order.index(current)
+    except ValueError:
+        return "high"
+    return order[min(index + 1, len(order) - 1)]
+
+
+def _insert_proposal(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: str,
+    triage: TriageResult,
+    final_priority: str,
+    rule_reasoning: dict[str, Any],
+) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO proposals (
+            thread_id,
+            status,
+            intent_classification,
+            priority_tier,
+            rule_reasoning,
+            confidence_score,
+            justification
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            thread_id,
+            AWAITING_REPLY_PROMPT,
+            triage.intent,
+            final_priority,
+            json.dumps(rule_reasoning, default=str),
+            triage.confidence_score,
+            triage.justification,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def _asana_booking_reminder_exists(conn: sqlite3.Connection, thread_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM audit_log
+        WHERE step_name = 'asana_booking_reminder' AND reference_id = ?
+        LIMIT 1
+        """,
+        (thread_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _maybe_dispatch_asana_booking_reminder(
+    conn: sqlite3.Connection,
+    *,
+    normalized: dict[str, str],
+    proposal_id: int,
+    intent: str,
+) -> None:
+    """Early reminder when inbound mail is lunch/dinner or Kory mentions a meal."""
+    from app.config import settings
+
+    if not settings.asana_enabled:
+        return
+
+    if os.getenv("LEXI_ASANA_AUTO_CREATE", "false").lower() not in {"1", "true", "yes"}:
+        return
+
+    from app.integrations.asana_manager import (
+        create_booking_reminder_task,
+        detect_kory_meal_mention,
+        meal_from_intent,
+        reservation_needed_for_proposal,
+    )
+
+    thread_id = normalized["thread_id"]
+    if _asana_booking_reminder_exists(conn, thread_id):
+        return
+
+    if not reservation_needed_for_proposal(
+        intent=intent,
+        subject=normalized["subject"],
+        body=normalized["raw_body"],
+        sender=normalized["sender"],
+    ):
+        return
+
+    meal = (
+        meal_from_intent(intent)
+        or detect_kory_meal_mention(
+            subject=normalized["subject"],
+            body=normalized["raw_body"],
+            sender=normalized["sender"],
+        )
+    )
+    if not meal:
+        return
+
+    asana_result = create_booking_reminder_task(
+        meal=meal,
+        meeting_subject=normalized["subject"],
+        thread_id=thread_id,
+        sender=normalized["sender"],
+        body_excerpt=normalized["raw_body"],
+        approved=True,
+    )
+    log_level = "INFO" if asana_result.get("ok") else "ERROR"
+    _insert_audit_log(
+        conn,
+        step_name="asana_booking_reminder",
+        reference_id=thread_id,
+        log_level=log_level,
+        message=(
+            f"Asana booking reminder ({meal}) "
+            f"{'created' if asana_result.get('ok') else 'failed'}."
+        ),
+        payload={
+            "proposal_id": proposal_id,
+            "meal": meal,
+            "asana_result": asana_result,
+        },
+    )
+
+
+def _insert_audit_log(
+    conn: sqlite3.Connection,
+    *,
+    step_name: str,
+    reference_id: str,
+    log_level: str,
+    message: str,
+    payload: dict[str, Any],
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO audit_log (step_name, reference_id, log_level, message, payload)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            step_name,
+            reference_id,
+            log_level,
+            message,
+            json.dumps(payload, default=str),
+        ),
+    )

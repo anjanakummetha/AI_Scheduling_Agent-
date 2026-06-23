@@ -8,8 +8,12 @@ from copy import deepcopy
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import logging
+
 from app.config import settings
-from app.integrations.composio_client import execute_tool
+from app.integrations.composio_client import execute_read_tool, execute_write_tool
+
+logger = logging.getLogger(__name__)
 
 SCHEDULING_TIMEZONE = settings.scheduling_timezone
 OUTLOOK_TIMEZONE = settings.outlook_timezone
@@ -27,7 +31,7 @@ HOLD_SUBJECT_RE = re.compile(r"^hold\s+-", re.IGNORECASE)
 
 
 def get_calendar_events(start_iso: str, end_iso: str) -> tuple[list[dict[str, Any]], str | None]:
-    result = execute_tool(
+    result = execute_read_tool(
         "OUTLOOK_GET_CALENDAR_VIEW",
         {
             "user_id": "me",
@@ -46,6 +50,22 @@ def get_calendar_events(start_iso: str, end_iso: str) -> tuple[list[dict[str, An
 
 
 def create_calendar_event(calendar_action: dict[str, Any]) -> tuple[str | None, str | None]:
+    if settings.lexi_dry_run:
+        preview_id = f"dry-run-event-{calendar_action.get('start', '')[:19]}"
+        logger.info(
+            "[DRY RUN] Would create Outlook event: %s",
+            calendar_action,
+        )
+        print(
+            "\n[Lexi DRY RUN] Calendar event NOT created. Would have scheduled:\n"
+            f"  Title: {calendar_action.get('title')}\n"
+            f"  Start: {calendar_action.get('start')}\n"
+            f"  End:   {calendar_action.get('end')}\n"
+            f"  Attendees: {calendar_action.get('attendees')}\n",
+            flush=True,
+        )
+        return preview_id, "dry-run-no-log"
+
     start = _convert_iso_timezone(calendar_action["start"], SCHEDULING_TIMEZONE, OUTLOOK_TIMEZONE)
     end = _convert_iso_timezone(calendar_action["end"], SCHEDULING_TIMEZONE, OUTLOOK_TIMEZONE)
     attendees = [
@@ -56,7 +76,7 @@ def create_calendar_event(calendar_action: dict[str, Any]) -> tuple[str | None, 
         for email in calendar_action.get("attendees", [])
     ]
 
-    result = execute_tool(
+    result = execute_write_tool(
         "OUTLOOK_CREATE_ME_EVENT",
         {
             "user_id": "me",
@@ -78,7 +98,13 @@ def create_calendar_event(calendar_action: dict[str, Any]) -> tuple[str | None, 
 
 
 def delete_calendar_event(event_id: str) -> str | None:
-    result = execute_tool(
+    if settings.lexi_dry_run:
+        if event_id.startswith("hold-pending-") or event_id.startswith("dry-run-"):
+            return "dry-run-no-log"
+        logger.info("[DRY RUN] Would delete Outlook event: %s", event_id)
+        print(f"\n[Lexi DRY RUN] Would delete calendar event: {event_id}\n", flush=True)
+        return "dry-run-no-log"
+    result = execute_write_tool(
         "OUTLOOK_DELETE_CALENDAR_EVENT",
         {
             "user_id": "me",
@@ -86,6 +112,52 @@ def delete_calendar_event(event_id: str) -> str | None:
         },
     )
     return result.get("log_id")
+
+
+def get_write_calendar_events(start_iso: str, end_iso: str) -> tuple[list[dict[str, Any]], str | None]:
+    """Calendar on write mailbox (sandbox in pilot)."""
+    result = execute_write_tool(
+        "OUTLOOK_GET_CALENDAR_VIEW",
+        {
+            "user_id": "me",
+            "start_datetime": _convert_iso_timezone(start_iso, SCHEDULING_TIMEZONE, OUTLOOK_TIMEZONE),
+            "end_datetime": _convert_iso_timezone(end_iso, SCHEDULING_TIMEZONE, OUTLOOK_TIMEZONE),
+            "timezone": OUTLOOK_TIMEZONE,
+            "top": 250,
+            "select": ["id", "subject", "start", "end", "showAs", "isCancelled", "isAllDay"],
+        },
+    )
+    data = _coerce_data(result["data"])
+    events = data.get("value") or data.get("events") or data.get("data") or []
+    if isinstance(events, dict):
+        events = events.get("value", [])
+    return _events_to_scheduling_timezone(events) if isinstance(events, list) else [], result.get("log_id")
+
+
+def has_write_calendar_conflict(
+    calendar_action: dict[str, Any],
+    *,
+    ignore_event_ids: list[str] | None = None,
+) -> tuple[bool, list[dict[str, Any]], str | None]:
+    start = calendar_action["start"]
+    end = calendar_action["end"]
+    start_dt = _slot_datetime(start)
+    end_dt = _slot_datetime(end)
+    if not start_dt or not end_dt:
+        return True, [], None
+    window_start = start_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    window_end = (end_dt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat()
+    events, log_id = get_write_calendar_events(window_start, window_end)
+    ignored = set(ignore_event_ids or [])
+
+    conflicts = [
+        event
+        for event in events
+        if event.get("id") not in ignored
+        and is_blocking_event(event)
+        and _event_overlaps(event, start_dt, end_dt)
+    ]
+    return bool(conflicts), conflicts, log_id
 
 
 def has_conflict(
