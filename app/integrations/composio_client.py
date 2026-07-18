@@ -14,7 +14,7 @@ class ComposioNotConfiguredError(RuntimeError):
     """Raised when Composio credentials are missing."""
 
 
-ConnectionRole = Literal["read", "write", "asana", "lexi"]
+ConnectionRole = Literal["read", "write", "asana", "lexi", "hubspot"]
 
 
 def _require_api_key() -> str:
@@ -63,6 +63,13 @@ def resolve_connection(role: ConnectionRole) -> tuple[str, str]:
         entity_id = settings.composio_entity_id or _account_entity_id(connection_id)
         return connection_id, entity_id
 
+    if role == "hubspot":
+        connection_id = settings.hubspot_composio_connection_id
+        if not connection_id:
+            raise ComposioNotConfiguredError("HUBSPOT_COMPOSIO_CONNECTION_ID is missing.")
+        entity_id = settings.composio_entity_id or _account_entity_id(connection_id)
+        return connection_id, entity_id
+
     # write
     if settings.lexi_write_mode == "kory":
         connection_id = settings.kory_composio_connection_id
@@ -96,8 +103,34 @@ def _is_write_tool(tool_slug: str) -> bool:
     from app.safety.kory_read_only import is_outlook_write_slug
 
     slug = tool_slug.upper()
-    if slug.startswith(("ASANA_CREATE", "ASANA_ADD", "ASANA_UPDATE")):
-        return True
+    if slug.startswith("ASANA_") and any(
+        token in slug
+        for token in (
+            "CREATE",
+            "ADD",
+            "UPDATE",
+            "DELETE",
+            "REMOVE",
+            "SET_",
+            "COMMENT",
+        )
+    ):
+        # Keep GET/SEARCH/LIST as reads.
+        if not any(token in slug for token in ("GET", "SEARCH", "LIST", "FIND", "FETCH")):
+            return True
+    if slug.startswith("HUBSPOT_") and any(
+        token in slug
+        for token in (
+            "CREATE",
+            "UPDATE",
+            "DELETE",
+            "MERGE",
+            "ARCHIVE",
+            "BATCH",
+        )
+    ):
+        if not any(token in slug for token in ("GET", "SEARCH", "LIST", "FIND", "FETCH", "READ")):
+            return True
     return is_outlook_write_slug(slug)
 
 
@@ -105,6 +138,8 @@ def _is_outlook_read_tool(tool_slug: str) -> bool:
     slug = tool_slug.upper()
     if slug.startswith("ASANA_"):
         return False
+    if slug.startswith("HUBSPOT_"):
+        return not _is_write_tool(tool_slug)
     if _is_write_tool(tool_slug):
         return False
     return slug.startswith("OUTLOOK_") or slug.startswith("MICROSOFT_OUTLOOK_")
@@ -133,6 +168,8 @@ def execute_tool(
     if role is None:
         if tool_slug.upper().startswith("ASANA_"):
             role = "asana"
+        elif tool_slug.upper().startswith("HUBSPOT_"):
+            role = "hubspot"
         elif _is_outlook_read_tool(tool_slug):
             role = "read"
         else:
@@ -149,10 +186,36 @@ def execute_tool(
 
     assert_kory_space_write_allowed(tool_slug=tool_slug, connection_id=connection_id)
 
-    if settings.lexi_dry_run and _is_write_tool(tool_slug):
-        preview = {"tool": tool_slug, "arguments": arguments, "dry_run": True, "role": role}
+    slug_u = tool_slug.upper()
+    asana_write_blocked = (
+        slug_u.startswith("ASANA_")
+        and _is_write_tool(tool_slug)
+        and (settings.lexi_dry_run or not settings.asana_live_writes_enabled)
+    )
+    hubspot_write_blocked = (
+        slug_u.startswith("HUBSPOT_")
+        and _is_write_tool(tool_slug)
+        and (settings.lexi_dry_run or not settings.hubspot_live_writes_enabled)
+    )
+    if (
+        (settings.lexi_dry_run and _is_write_tool(tool_slug))
+        or asana_write_blocked
+        or hubspot_write_blocked
+    ):
+        reason = "dry_run"
+        if asana_write_blocked and not settings.asana_live_writes_enabled:
+            reason = "asana_live_writes_disabled"
+        if hubspot_write_blocked and not settings.hubspot_live_writes_enabled:
+            reason = "hubspot_live_writes_disabled"
+        preview = {
+            "tool": tool_slug,
+            "arguments": arguments,
+            "dry_run": True,
+            "role": role,
+            "blocked_reason": reason,
+        }
         print(
-            f"\n[Lexi DRY RUN] Composio write blocked: {tool_slug} (role={role})\n"
+            f"\n[Lexi WRITE BLOCKED] {tool_slug} (role={role}, reason={reason})\n"
             f"  args: {arguments}\n",
             flush=True,
         )
@@ -196,6 +259,10 @@ def execute_write_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, A
 
 def execute_asana_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return execute_tool(tool_slug, arguments, role="asana")
+
+
+def execute_hubspot_tool(tool_slug: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return execute_tool(tool_slug, arguments, role="hubspot")
 
 
 def resolve_search_user_id() -> str:

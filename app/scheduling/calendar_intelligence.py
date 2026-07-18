@@ -19,7 +19,7 @@ import rules as kory_rules
 _COPY_SUFFIX_RE = re.compile(r"\s*\(copy\)\s*$", re.IGNORECASE)
 _DO_NOT_MOVE_RE = re.compile(r"do\s*not\s*move", re.IGNORECASE)
 
-# Kory-owned personal blocks on Master (always block).
+# Kory-owned personal blocks (always block).
 _KORY_PERSONAL_BLOCK_PATTERNS = (
     r"\bkm\s+personal\s+training\b",
     r"\bkory\b.*\b(personal\s+)?training\b",
@@ -33,31 +33,108 @@ _KORY_PERSONAL_BLOCK_PATTERNS = (
     r"\bbridget\b.*\b(do\s*not|non-negotiable)\b",
 )
 
+# School / family logistics where Kory is involved (not kid-only camp).
+_KORY_LOGISTICS_PATTERNS = (
+    r"\bdrop\s*off\b",
+    r"\bpick\s*up\b",
+    r"\bpickup\b",
+    r"\bk\+b\b",
+)
+
+# Hard blocks that may exist only on Master (no work Calendar twin).
+_MASTER_HARD_BLOCK_PATTERNS = (
+    r"^doug\b",
+    r"\bnexsite\b",
+    r"\bcanopy service\b",
+    r"\bypo\b",
+)
+
+# Personal social / errands on Master that mean Kory is busy.
+_PERSONAL_KORY_LEISURE_PATTERNS = (
+    r"\beidson",
+    r"\bmassage\b",
+    r"\breservation at\b",
+    r"\bbeckon\b",
+    r"\bhorse clinic\b",
+    r"\btouchup\b",
+    r"\bnap\s*\+",
+    r"😴",
+    r"\bpickup wine\b",
+    r"\bpickup sams\b",
+)
+
+# Kory labels Master events he attends (future-friendly).
+_KORY_ATTENDANCE_LABEL_PATTERNS = (
+    r"^\[kory\]",
+    r"^kory\s*[\-–—:]",
+    r"\bkory attends\b",
+)
+
 # Travel / out-of-office — block business scheduling across the span.
 _TRAVEL_BLOCK_PATTERNS = (
     r"^stay at\b",
     r"\bflight to\b",
     r"\bflight from\b",
+    r"\bua\s+\d+",
     r"\bin chicago\b",
     r"\bin travel\b",
     r"\bfamily safari\b",
     r"\bkory in [a-z]+\b",
     r"\bout of office\b",
     r"\booo\b",
+    r"\bcheck-?in to check-?out\b",
+    r"\bprivate\s+.*\btour\b",
+    r"\bpeninsula tour\b",
+    r"\bcape town\b",
+    r"\bmount nelson\b",
+    r"🏔|🍽|🏨|✈|🐧",
+    r"\bdinner\s*[—\-]\s*",
+    r"\bbreakfast\s*[—\-]\s*",
+    r"\breturn home\b",
+    r"\bpickup at\b",
+    r"\bsafari\b",
+    r"\broyal livingstone\b",
+    r"\bheathrow express\b",
+    r"\bopening social\b",
+    r"\bcultural exchange\b",
+    r"\bhelicopter tour\b",
+    r"🦁|🚁|🥂|🍳|🌍|⚠️|😴",
+)
+
+# Kory-named meetings on Master — usually work copies, not personal blocks.
+_KORY_NAMED_MEETING_PATTERNS = (
+    r"\bkory\s+mitchell\s+and\b",
+    r"\bkory\s+mitchell\s*\|",
+    r"\bkory\s*\([^)]*(ifg|podcast)",
+    r"\bkory\b.*\b<>\b",
+    r"\b<>\s*kory\b",
+    r"\| kory mitchell\b",
+    r"\bwith kory mitchell\b",
+    r"\bkory\s*\(ifg\)",
+    r"\bintro\b.*\bkory\b",
+    r"\bkory\b.*\bintro\b",
+    r"\bpodcast\b",
+)
+
+# KM prefix / initials — positive personal signal (not sufficient alone).
+_KM_PERSONAL_HINT_PATTERNS = (
+    r"^km[\s:\-]",
+    r"\bkm\s+(personal|training|drop|pick|gym|workout|trainer|dentist|doctor)\b",
 )
 
 # Kid / family activity on Master that does NOT mean Kory is busy.
 _KID_ONLY_NON_BLOCKING_PATTERNS = (
-    r"\bmaclain\b",
+    r"\bmaclain\b.*\b(camp|lesson|riding)\b",
+    r"\bmaclain\s*@\s*isd\b",
     r"\bgracie\b",
     r"\bbecky\b.*\bkids\b",
     r"\bsummer camp\b",
     r"\bmystery camp\b",
+    r"\bisd camp\b",
     r"\bisd summer\b",
-    r"\bgeneva glen\b",
     r"\bmyths\s*&\s*magic\b",
     r"\bnatalia\b.*\bwedding\b",
-    r"\bbridget\b.*\b(?!kory|drop|pick)",  # Bridget events without Kory logistics
+    r"\bbridget\b.*\b(?!kory|drop|pick)",
 )
 
 # Work signals — block even on Master when not a duplicate copy of work cal.
@@ -75,13 +152,20 @@ _WORK_SIGNAL_PATTERNS = (
     r"\bzoom\b",
     r"\b@\s*kory",
     r"\bkory\s*\|",
+    r"\bkory\s+mitchell\b",
     r"\bwith kory\b",
+    r"\b<>\b",
     r"\bjosh hood\b",
     r"\bheidi\b",
     r"\bdoug\b",
     r"\bpatrick\b",
     r"\bwob\b",
     r"\binbox review\b",
+    r"\bweekly\s+stand[\s-]?up\b",
+    r"\bstand[\s-]?up\b",
+    r"\bshift\b",
+    r"\bsierra\b",
+    r"\bproject\s+sierra\b",
 )
 
 _BIRTHDAY_CALENDAR_NAMES = frozenset({"birthdays"})
@@ -130,6 +214,64 @@ def _subject_matches(patterns: tuple[str, ...], subject: str) -> bool:
     return any(re.search(p, subject, re.IGNORECASE) for p in patterns)
 
 
+def _km_personal_hint(subject: str, norm_subject: str) -> bool:
+    """KM / initials lean personal — overridden by work, kid, or travel signals."""
+    raw = (subject or "").strip()
+    if _subject_matches(_KM_PERSONAL_HINT_PATTERNS, raw) or _subject_matches(
+        _KM_PERSONAL_HINT_PATTERNS, norm_subject
+    ):
+        return True
+    return bool(re.match(r"^km\b", raw, re.IGNORECASE))
+
+
+def _is_kory_logistics(norm_subject: str) -> bool:
+    if _subject_matches(_KORY_LOGISTICS_PATTERNS, norm_subject):
+        if re.search(r"\bpickup at\b", norm_subject, re.IGNORECASE):
+            return False
+        return True
+    return False
+
+
+def _is_kid_only_subject(norm_subject: str) -> bool:
+    if _is_kory_logistics(norm_subject):
+        return False
+    return _subject_matches(_KID_ONLY_NON_BLOCKING_PATTERNS, norm_subject)
+
+
+def _kory_explicit_attendance_label(subject: str, norm_subject: str) -> bool:
+    """Kory prefixes Master events he attends: 'Kory - …' or '[Kory] …'."""
+    raw = (subject or "").strip()
+    if not (
+        re.match(r"^kory\s*[\-–—:]", raw, re.IGNORECASE)
+        or re.match(r"^\[kory\]", raw, re.IGNORECASE)
+        or _subject_matches(_KORY_ATTENDANCE_LABEL_PATTERNS, raw)
+    ):
+        return False
+    if _subject_matches(_KORY_NAMED_MEETING_PATTERNS, norm_subject):
+        return False
+    if _subject_matches(_WORK_SIGNAL_PATTERNS, norm_subject):
+        return False
+    return True
+
+
+def _classified(
+    event: dict[str, Any],
+    *,
+    blocking_class: EventBlockingClass,
+    blocks_kory: bool,
+    calendar_name: str,
+    norm_subject: str,
+) -> ClassifiedEvent:
+    return ClassifiedEvent(
+        raw=event,
+        blocking_class=blocking_class,
+        blocks_kory=blocks_kory,
+        calendar_name=calendar_name,
+        normalized_subject=norm_subject,
+        dedupe_key=_dedupe_key(event, norm_subject),
+    )
+
+
 def classify_event(event: dict[str, Any]) -> ClassifiedEvent:
     """Classify one Outlook event for Kory busy/free."""
     subject = str(event.get("subject") or "")
@@ -138,105 +280,147 @@ def classify_event(event: dict[str, Any]) -> ClassifiedEvent:
     cal_lower = cal_name.lower()
 
     if cal_lower in _BIRTHDAY_CALENDAR_NAMES or subject.lower().startswith("birthday"):
-        return ClassifiedEvent(
-            raw=event,
+        return _classified(
+            event,
             blocking_class=EventBlockingClass.INFORMATIONAL,
             blocks_kory=False,
             calendar_name=cal_name,
-            normalized_subject=norm_subject,
-            dedupe_key=_dedupe_key(event, norm_subject),
+            norm_subject=norm_subject,
         )
 
+    if re.search(r"\bbirthday\b", norm_subject, re.IGNORECASE):
+        if re.search(r"birthday\s*\(\d{4}\)", norm_subject) or re.search(
+            r"^[\w\s]+\s*-\s*birthday\b", norm_subject, re.IGNORECASE
+        ):
+            return _classified(
+                event,
+                blocking_class=EventBlockingClass.INFORMATIONAL,
+                blocks_kory=False,
+                calendar_name=cal_name,
+                norm_subject=norm_subject,
+            )
+
     if _DO_NOT_MOVE_RE.search(subject):
-        return ClassifiedEvent(
-            raw=event,
+        return _classified(
+            event,
             blocking_class=EventBlockingClass.FAMILY_DO_NOT_MOVE,
             blocks_kory=True,
             calendar_name=cal_name,
-            normalized_subject=norm_subject,
-            dedupe_key=_dedupe_key(event, norm_subject),
+            norm_subject=norm_subject,
         )
 
-    if _subject_matches(_TRAVEL_BLOCK_PATTERNS, norm_subject):
-        return ClassifiedEvent(
-            raw=event,
+    if _subject_matches(_TRAVEL_BLOCK_PATTERNS, norm_subject) or _subject_matches(
+        _TRAVEL_BLOCK_PATTERNS, subject
+    ):
+        return _classified(
+            event,
             blocking_class=EventBlockingClass.TRAVEL_BLOCKING,
             blocks_kory=True,
             calendar_name=cal_name,
-            normalized_subject=norm_subject,
-            dedupe_key=_dedupe_key(event, norm_subject),
+            norm_subject=norm_subject,
         )
 
     if _subject_matches(_KORY_PERSONAL_BLOCK_PATTERNS, norm_subject):
-        return ClassifiedEvent(
-            raw=event,
+        return _classified(
+            event,
             blocking_class=EventBlockingClass.PERSONAL_KORY_BLOCKING,
             blocks_kory=True,
             calendar_name=cal_name,
-            normalized_subject=norm_subject,
-            dedupe_key=_dedupe_key(event, norm_subject),
+            norm_subject=norm_subject,
         )
 
-    if _COPY_SUFFIX_RE.search(subject) and _is_master_calendar(cal_name):
-        if _subject_matches(_WORK_SIGNAL_PATTERNS, norm_subject):
-            return ClassifiedEvent(
-                raw=event,
-                blocking_class=EventBlockingClass.DUPLICATE_COPY,
-                blocks_kory=False,
-                calendar_name=cal_name,
-                normalized_subject=norm_subject,
-                dedupe_key=_dedupe_key(event, norm_subject),
-            )
-        if _subject_matches(_KID_ONLY_NON_BLOCKING_PATTERNS, norm_subject):
-            return ClassifiedEvent(
-                raw=event,
-                blocking_class=EventBlockingClass.KID_ONLY_NON_BLOCKING,
-                blocks_kory=False,
-                calendar_name=cal_name,
-                normalized_subject=norm_subject,
-                dedupe_key=_dedupe_key(event, norm_subject),
-            )
+    if _is_kory_logistics(norm_subject):
+        return _classified(
+            event,
+            blocking_class=EventBlockingClass.PERSONAL_KORY_BLOCKING,
+            blocks_kory=True,
+            calendar_name=cal_name,
+            norm_subject=norm_subject,
+        )
 
-    if _is_master_calendar(cal_name) and _subject_matches(
-        _KID_ONLY_NON_BLOCKING_PATTERNS, norm_subject
-    ):
-        if not _subject_matches(_WORK_SIGNAL_PATTERNS, norm_subject) and "kory" not in norm_subject:
-            return ClassifiedEvent(
-                raw=event,
-                blocking_class=EventBlockingClass.KID_ONLY_NON_BLOCKING,
-                blocks_kory=False,
-                calendar_name=cal_name,
-                normalized_subject=norm_subject,
-                dedupe_key=_dedupe_key(event, norm_subject),
-            )
-
-    if _is_work_calendar(cal_name) or _subject_matches(_WORK_SIGNAL_PATTERNS, norm_subject):
-        return ClassifiedEvent(
-            raw=event,
+    if _subject_matches(_MASTER_HARD_BLOCK_PATTERNS, norm_subject):
+        return _classified(
+            event,
             blocking_class=EventBlockingClass.WORK_BLOCKING,
             blocks_kory=True,
             calendar_name=cal_name,
-            normalized_subject=norm_subject,
-            dedupe_key=_dedupe_key(event, norm_subject),
+            norm_subject=norm_subject,
         )
 
+    if _is_master_calendar(cal_name) and _kory_explicit_attendance_label(subject, norm_subject):
+        return _classified(
+            event,
+            blocking_class=EventBlockingClass.PERSONAL_KORY_BLOCKING,
+            blocks_kory=True,
+            calendar_name=cal_name,
+            norm_subject=norm_subject,
+        )
+
+    if _is_master_calendar(cal_name) and _is_kid_only_subject(norm_subject):
+        return _classified(
+            event,
+            blocking_class=EventBlockingClass.KID_ONLY_NON_BLOCKING,
+            blocks_kory=False,
+            calendar_name=cal_name,
+            norm_subject=norm_subject,
+        )
+
+    if _is_work_calendar(cal_name) or _subject_matches(_WORK_SIGNAL_PATTERNS, norm_subject):
+        return _classified(
+            event,
+            blocking_class=EventBlockingClass.WORK_BLOCKING,
+            blocks_kory=True,
+            calendar_name=cal_name,
+            norm_subject=norm_subject,
+        )
+
+    if _is_master_calendar(cal_name) and _subject_matches(
+        _KORY_NAMED_MEETING_PATTERNS, norm_subject
+    ):
+        return _classified(
+            event,
+            blocking_class=EventBlockingClass.WORK_BLOCKING,
+            blocks_kory=True,
+            calendar_name=cal_name,
+            norm_subject=norm_subject,
+        )
+
+    if _is_master_calendar(cal_name) and _subject_matches(
+        _PERSONAL_KORY_LEISURE_PATTERNS, norm_subject
+    ):
+        return _classified(
+            event,
+            blocking_class=EventBlockingClass.PERSONAL_KORY_BLOCKING,
+            blocks_kory=True,
+            calendar_name=cal_name,
+            norm_subject=norm_subject,
+        )
+
+    if _is_master_calendar(cal_name) and _km_personal_hint(subject, norm_subject):
+        if not _subject_matches(_WORK_SIGNAL_PATTERNS, norm_subject):
+            return _classified(
+                event,
+                blocking_class=EventBlockingClass.PERSONAL_KORY_BLOCKING,
+                blocks_kory=True,
+                calendar_name=cal_name,
+                norm_subject=norm_subject,
+            )
+
     if _is_master_calendar(cal_name):
-        return ClassifiedEvent(
-            raw=event,
+        return _classified(
+            event,
             blocking_class=EventBlockingClass.UNKNOWN_BLOCKING,
             blocks_kory=True,
             calendar_name=cal_name,
-            normalized_subject=norm_subject,
-            dedupe_key=_dedupe_key(event, norm_subject),
+            norm_subject=norm_subject,
         )
 
-    return ClassifiedEvent(
-        raw=event,
+    return _classified(
+        event,
         blocking_class=EventBlockingClass.UNKNOWN_BLOCKING,
         blocks_kory=True,
         calendar_name=cal_name,
-        normalized_subject=norm_subject,
-        dedupe_key=_dedupe_key(event, norm_subject),
+        norm_subject=norm_subject,
     )
 
 
@@ -306,13 +490,26 @@ def resolve_calendar_horizon_days(
     subject: str = "",
     body: str = "",
     explicit_days: int | None = None,
+    now: datetime | None = None,
 ) -> int:
     """How many days ahead to load — default from settings, extend for far-future asks."""
+    from app.config import settings
+    from app.scheduling.scheduling_window import infer_scheduling_window
+    from zoneinfo import ZoneInfo
+
     base = explicit_days or settings.lexi_calendar_search_days
     base = max(7, min(base, settings.lexi_calendar_search_days_max))
     combined = f"{subject}\n{body}".lower()
 
-  # Month names / relative far-future cues
+    mt = ZoneInfo(settings.scheduling_timezone)
+    today = (now or datetime.now(tz=mt)).astimezone(mt).date()
+    window = infer_scheduling_window(subject=subject, body=body, now=now)
+    if window:
+        days_needed = (window.end - today).days + 2
+        days_needed = max(7, days_needed)
+        base = min(base, days_needed)
+
+    # Month names / relative far-future cues
     month_hints = (
         "january", "february", "march", "april", "may", "june",
         "july", "august", "september", "october", "november", "december",
@@ -354,34 +551,89 @@ def summarize_blocking_events(events: list[dict[str, Any]], *, limit: int = 80) 
     }
 
 
+def parse_duration_from_text(text: str) -> int | None:
+    """Read explicit duration cues from email subject/body (10–240 minutes)."""
+    if not (text or "").strip():
+        return None
+    lowered = text.lower()
+    if re.search(r"\bhalf[- ]?(?:an? )?hour\b", lowered):
+        return 30
+    if re.search(r"\bquarter[- ]?(?:of an? )?hour\b", lowered):
+        return 15
+    if re.search(r"\b(?:one|1)\s*[- ]?hours?\b", lowered):
+        return 60
+    hour_match = re.search(r"\b(\d{1,2})\s*[- ]?(?:hours?|hrs?)\b", lowered)
+    if hour_match:
+        hours = int(hour_match.group(1))
+        if 1 <= hours <= 4:
+            return hours * 60
+    minute_match = re.search(r"\b(\d{1,3})\s*[- ]?\s*(?:min(?:ute)?s?|m)\b", text, re.I)
+    if minute_match:
+        value = int(minute_match.group(1))
+        if 10 <= value <= 240:
+            return value
+    return None
+
+
+def infer_duration_from_email(
+    *,
+    subject: str = "",
+    body: str = "",
+    intent: str | None = None,
+    plan_duration_minutes: int | None = None,
+) -> int:
+    """Email text wins, then scheduling plan, then meeting-type defaults."""
+    from app.scheduling.meeting_type import calendar_block_minutes_for_context
+
+    explicit = parse_duration_from_text(f"{subject}\n{body}")
+    if explicit:
+        from app.scheduling.meeting_type import resolve_meeting_type
+
+        spec = resolve_meeting_type(intent=intent, subject=subject, body=body)
+        if spec.type_key == "coffee":
+            return spec.calendar_block_minutes
+        return explicit
+    if plan_duration_minutes and plan_duration_minutes > 0:
+        from app.scheduling.meeting_type import resolve_meeting_type
+
+        spec = resolve_meeting_type(intent=intent, subject=subject, body=body)
+        if spec.type_key == "coffee":
+            return spec.calendar_block_minutes
+        return plan_duration_minutes
+    from app.scheduling.meeting_type import calendar_block_minutes_for_context
+
+    return calendar_block_minutes_for_context(
+        intent=intent, subject=subject, body=body
+    )
+
+
 def infer_meeting_duration_minutes(intent: str | None) -> int:
-    """Default duration from rules.py meeting types."""
-    intent_key = (intent or "unknown").lower().replace(" ", "_")
-    mapping = {
-        "coffee": 60,
-        "lunch_request": 60,
-        "lunch": 60,
-        "dinner_request": 90,
-        "dinner": 90,
-        "happy_hour": 90,
-        "pitch": 60,
-        "new_client": 60,
-        "board_meeting": 60,
-        "internal_sync": 30,
-        "delegation": 30,
-        "reschedule": 30,
-    }
-    if intent_key in mapping:
-        return mapping[intent_key]
-    if intent_key in kory_rules.MEETING_TYPES:
-        mt = kory_rules.MEETING_TYPES[intent_key]
-        return int(mt.get("duration_minutes") or mt.get("calendar_block_minutes") or 30)
-    return 30
+    """Default meeting duration (not calendar block) from meeting type."""
+    from app.scheduling.meeting_type import resolve_meeting_type
+
+    return resolve_meeting_type(intent=intent).duration_minutes
 
 
-def calendar_block_minutes_for_intent(intent: str | None) -> int:
+def calendar_block_minutes_for_intent(
+    intent: str | None,
+    *,
+    subject: str = "",
+    body: str = "",
+) -> int:
     """Calendar block size including buffers (e.g. coffee = 90)."""
-    intent_key = (intent or "unknown").lower().replace(" ", "_")
-    if intent_key == "coffee":
-        return int(kory_rules.MEETING_TYPES["coffee"].get("calendar_block_minutes") or 90)
-    return infer_meeting_duration_minutes(intent)
+    from app.scheduling.meeting_type import calendar_block_minutes_for_context
+
+    return calendar_block_minutes_for_context(
+        intent=intent, subject=subject, body=body
+    )
+
+
+def slot_duration_minutes(slot: dict[str, str]) -> int | None:
+    from app.scheduling.busy_intervals import slot_interval
+
+    interval = slot_interval(slot)
+    if not interval:
+        return None
+    start, end = interval
+    minutes = int((end - start).total_seconds() // 60)
+    return minutes if minutes > 0 else None

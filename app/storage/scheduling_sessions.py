@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -59,17 +60,36 @@ def create_session(
     *,
     channel: str = "hermes",
     context: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> str:
-    session_id = f"sess-{uuid.uuid4().hex[:12]}"
+    sid = (session_id or "").strip() or f"sess-{uuid.uuid4().hex[:12]}"
     with get_lexi_connection() as conn:
         conn.execute(
             """
             INSERT INTO scheduling_sessions (id, channel, status, context_json)
             VALUES (?, ?, 'active', ?)
             """,
-            (session_id, channel, json.dumps(_compact_context(context or {}), default=str)),
+            (sid, channel, json.dumps(_compact_context(context or {}), default=str)),
         )
         conn.commit()
+    return sid
+
+
+def upsert_thread_session(
+    thread_id: str,
+    context: dict[str, Any],
+    *,
+    channel: str = "inbound",
+) -> str:
+    """Stable session id per email thread for Hermes whole-task memory."""
+    digest = hashlib.sha256(thread_id.encode()).hexdigest()[:12]
+    session_id = f"thread-{digest}"
+    existing = get_session(session_id)
+    if existing:
+        merged = {**existing.get("context", {}), **context}
+        update_session(session_id, context=merged)
+    else:
+        create_session(channel=channel, context=context, session_id=session_id)
     return session_id
 
 

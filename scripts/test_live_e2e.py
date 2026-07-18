@@ -90,9 +90,14 @@ def tc03_sandbox_hold() -> tuple[str | None]:
     )
     slot_end = slot_start + timedelta(minutes=30)
     hold = place_tentative_hold(
-        title="Lexi E2E hold (auto-cleanup)",
-        start_iso=slot_start.isoformat(),
-        end_iso=slot_end.isoformat(),
+        action={
+            "title": "Lexi E2E hold (auto-cleanup)",
+            "start": slot_start.isoformat(),
+            "end": slot_end.isoformat(),
+            "attendees": [],
+            "body": "E2E test hold",
+            "is_online_meeting": False,
+        },
     )
     event_id = hold.get("event_id") if hold.get("ok") else None
     record(

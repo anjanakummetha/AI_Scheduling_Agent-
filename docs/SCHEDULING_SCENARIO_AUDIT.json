@@ -1,0 +1,608 @@
+{
+  "generated_at": "2026-07-01T15:44:11.607554-06:00",
+  "calendar": {
+    "busy_events": 210,
+    "horizon_days": 60,
+    "calendars_consulted": [
+      {
+        "configured_name": "Kory Master Calendar (ALL)",
+        "resolved": true,
+        "name": "Kory Master Calendar (ALL)",
+        "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEGAAAz1opVsp0OQIyLOLZDmMP4AAAhaaiEAAA=",
+        "can_edit": true,
+        "primary": false
+      },
+      {
+        "configured_name": "Calendar",
+        "resolved": true,
+        "name": "Calendar",
+        "id": "AAMkADUyMTQ4OGZmLTI3M2MtNDI5Ny1hZmU3LTM3MzA5YTBkMGQ0YQBGAAAAAACrfqeoAKDgTK8yRknLPdE0BwAz1opVsp0OQIyLOLZDmMP4AAAAAAEGAAAz1opVsp0OQIyLOLZDmMP4AAAAALVNAAA=",
+        "can_edit": true,
+        "primary": true
+      }
+    ]
+  },
+  "summary": {
+    "passed": 12,
+    "failed": 0,
+    "total": 12
+  },
+  "scenarios": [
+    {
+      "id": "intro_denver",
+      "label": "30m virtual intro \u2014 Denver family office",
+      "subject": "TEST \u2014 intro call \u2014 Denver family office",
+      "body": "I'm with a Denver-based family office. Would you have 30 minutes sometime next week? Mornings work best.",
+      "sender": "bill.heermann@newportadvisors.co",
+      "ok": true,
+      "path": "slot_engine",
+      "meeting_type": "referral_or_intro",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-22T09:00:00-06:00",
+          "end": "2026-07-22T09:30:00-06:00"
+        },
+        {
+          "start": "2026-07-22T10:00:00-06:00",
+          "end": "2026-07-22T10:30:00-06:00"
+        },
+        {
+          "start": "2026-07-22T11:00:00-06:00",
+          "end": "2026-07-22T11:30:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-22T09:00:00-06:00",
+            "end": "2026-07-22T09:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-22T10:00:00-06:00",
+            "end": "2026-07-22T10:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-22T11:00:00-06:00",
+            "end": "2026-07-22T11:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "intro_east_coast",
+      "label": "30m intro \u2014 East Coast requester",
+      "subject": "TEST \u2014 intro \u2014 NYC connection",
+      "body": "Quick 30-minute intro on Teams next week? I'm on the East Coast \u2014 early morning your time works well.",
+      "sender": "braden@example.com",
+      "ok": true,
+      "path": "slot_engine",
+      "meeting_type": "referral_or_intro",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-22T09:00:00-06:00",
+          "end": "2026-07-22T09:30:00-06:00"
+        },
+        {
+          "start": "2026-07-22T10:00:00-06:00",
+          "end": "2026-07-22T10:30:00-06:00"
+        },
+        {
+          "start": "2026-07-22T11:00:00-06:00",
+          "end": "2026-07-22T11:30:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-22T09:00:00-06:00",
+            "end": "2026-07-22T09:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-22T10:00:00-06:00",
+            "end": "2026-07-22T10:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-22T11:00:00-06:00",
+            "end": "2026-07-22T11:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "new_client_60",
+      "label": "60m new client diligence",
+      "subject": "TEST \u2014 Project Sierra diligence call",
+      "body": "Can we schedule a 60-minute diligence call next week? Happy to do Teams.",
+      "sender": "travis@portfolio.com",
+      "ok": true,
+      "path": "slot_engine",
+      "meeting_type": "new_client",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-13T16:00:00-06:00",
+          "end": "2026-07-13T17:00:00-06:00"
+        },
+        {
+          "start": "2026-07-14T16:00:00-06:00",
+          "end": "2026-07-14T17:00:00-06:00"
+        },
+        {
+          "start": "2026-07-15T16:00:00-06:00",
+          "end": "2026-07-15T17:00:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-13T16:00:00-06:00",
+            "end": "2026-07-13T17:00:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-14T16:00:00-06:00",
+            "end": "2026-07-14T17:00:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-15T16:00:00-06:00",
+            "end": "2026-07-15T17:00:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "coffee_cherry_creek",
+      "label": "Coffee Cherry Creek mornings",
+      "subject": "TEST \u2014 coffee in Cherry Creek",
+      "body": "Would love to grab coffee in Cherry Creek next week \u2014 mornings are best.",
+      "sender": "jordan@evergreen.com",
+      "ok": true,
+      "path": "slot_engine",
+      "meeting_type": "coffee",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-22T09:30:00-06:00",
+          "end": "2026-07-22T10:30:00-06:00"
+        },
+        {
+          "start": "2026-08-12T09:30:00-06:00",
+          "end": "2026-08-12T10:30:00-06:00"
+        },
+        {
+          "start": "2026-08-18T09:00:00-06:00",
+          "end": "2026-08-18T10:00:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-22T09:30:00-06:00",
+            "end": "2026-07-22T10:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-08-12T09:30:00-06:00",
+            "end": "2026-08-12T10:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-08-18T09:00:00-06:00",
+            "end": "2026-08-18T10:00:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "happy_hour",
+      "label": "Happy hour intro",
+      "subject": "TEST \u2014 happy hour intro",
+      "body": "Could we do a happy hour intro next week? Afternoons work \u2014 Cherry Creek area.",
+      "sender": "george@bokfinancial.com",
+      "ok": true,
+      "path": "slot_engine",
+      "meeting_type": "happy_hour",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-08-05T15:30:00-06:00",
+          "end": "2026-08-05T17:00:00-06:00"
+        },
+        {
+          "start": "2026-08-17T15:30:00-06:00",
+          "end": "2026-08-17T17:00:00-06:00"
+        },
+        {
+          "start": "2026-08-24T15:30:00-06:00",
+          "end": "2026-08-24T17:00:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-08-05T15:30:00-06:00",
+            "end": "2026-08-05T17:00:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-08-17T15:30:00-06:00",
+            "end": "2026-08-17T17:00:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-08-24T15:30:00-06:00",
+            "end": "2026-08-24T17:00:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "dinner",
+      "label": "Dinner meeting request",
+      "subject": "TEST \u2014 dinner while you're in town",
+      "body": "Any chance for a dinner meeting next week? Evening works \u2014 Cherry Creek preferred.",
+      "sender": "michelle@example.com",
+      "ok": false,
+      "path": "slot_engine",
+      "meeting_type": "dinner",
+      "write_calendar": "Calendar",
+      "slots": [],
+      "issues": [],
+      "failure_message": "I couldn't find a dinner slot for week of July 13 (after travel). Should I try a different week? Engine diagnostics: {'candidates_scored': 0, 'urgent': False, 'block_minutes': 90, 'reserve_minutes': 90, 'meeting_type': 'dinner', 'meeting_type_label': 'Dinner Meeting', 'preferences_memory_count': 0, 'scheduling_window': {'start': '2026-07-13', 'end': '2026-07-19', 'source': 'travel_shift', 'label': 'week of July 13 (after travel)'}, 'time_of_day_window': None, 'allowed_weekdays': None, 'status': 'insufficient_slots'}",
+      "slot_checks": []
+    },
+    {
+      "id": "podcast",
+      "label": "The Turn podcast recording",
+      "subject": "TEST \u2014 The Turn podcast",
+      "body": "Would Kory have 30 minutes to record an episode for The Turn next week?",
+      "sender": "producer@podcast.com",
+      "ok": true,
+      "path": "slot_engine",
+      "meeting_type": "podcast",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-14T14:00:00-06:00",
+          "end": "2026-07-14T14:30:00-06:00"
+        },
+        {
+          "start": "2026-07-15T14:00:00-06:00",
+          "end": "2026-07-15T14:30:00-06:00"
+        },
+        {
+          "start": "2026-07-17T14:00:00-06:00",
+          "end": "2026-07-17T14:30:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-14T14:00:00-06:00",
+            "end": "2026-07-14T14:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-15T14:00:00-06:00",
+            "end": "2026-07-15T14:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-17T14:00:00-06:00",
+            "end": "2026-07-17T14:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "inbound_specific_time",
+      "label": "Inbound proposes specific time (should match or fall through)",
+      "subject": "TEST \u2014 intro Tuesday 2pm MT",
+      "body": "Would Tuesday at 2:00 PM Mountain work for a 30-minute Teams intro next week? If not, happy to hear other options.",
+      "sender": "kd@blooma.com",
+      "ok": true,
+      "path": "slot_engine_after_inbound",
+      "meeting_type": "referral_or_intro",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-13T16:00:00-06:00",
+          "end": "2026-07-13T16:30:00-06:00"
+        },
+        {
+          "start": "2026-07-14T14:00:00-06:00",
+          "end": "2026-07-14T14:30:00-06:00"
+        },
+        {
+          "start": "2026-07-14T16:00:00-06:00",
+          "end": "2026-07-14T16:30:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-13T16:00:00-06:00",
+            "end": "2026-07-13T16:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-14T14:00:00-06:00",
+            "end": "2026-07-14T14:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-14T16:00:00-06:00",
+            "end": "2026-07-14T16:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "inbound_bad_time",
+      "label": "Inbound proposes time during known busy window",
+      "subject": "TEST \u2014 intro Monday 1:30pm",
+      "body": "Does Monday at 1:30 PM MT work for a quick 30-minute intro call?",
+      "sender": "intro@firstbank.com",
+      "ok": true,
+      "path": "slot_engine_after_inbound",
+      "meeting_type": "referral_or_intro",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-07T09:00:00-06:00",
+          "end": "2026-07-07T09:30:00-06:00"
+        },
+        {
+          "start": "2026-07-10T09:00:00-06:00",
+          "end": "2026-07-10T09:30:00-06:00"
+        },
+        {
+          "start": "2026-07-10T10:00:00-06:00",
+          "end": "2026-07-10T10:30:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-07T09:00:00-06:00",
+            "end": "2026-07-07T09:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-10T09:00:00-06:00",
+            "end": "2026-07-10T09:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-10T10:00:00-06:00",
+            "end": "2026-07-10T10:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "virtual_back_to_back",
+      "label": "Virtual intro \u2014 must respect 2hr B2B cap",
+      "subject": "TEST \u2014 intro after heavy meeting day",
+      "body": "30-minute Teams intro next week \u2014 flexible on timing.",
+      "sender": "ramzi@firstbank.com",
+      "ok": true,
+      "path": "slot_engine",
+      "meeting_type": "referral_or_intro",
+      "write_calendar": "Calendar",
+      "slots": [
+        {
+          "start": "2026-07-13T16:00:00-06:00",
+          "end": "2026-07-13T16:30:00-06:00"
+        },
+        {
+          "start": "2026-07-14T14:00:00-06:00",
+          "end": "2026-07-14T14:30:00-06:00"
+        },
+        {
+          "start": "2026-07-14T16:00:00-06:00",
+          "end": "2026-07-14T16:30:00-06:00"
+        }
+      ],
+      "issues": [],
+      "failure_message": "",
+      "slot_checks": [
+        {
+          "slot": {
+            "start": "2026-07-13T16:00:00-06:00",
+            "end": "2026-07-13T16:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-14T14:00:00-06:00",
+            "end": "2026-07-14T14:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        },
+        {
+          "slot": {
+            "start": "2026-07-14T16:00:00-06:00",
+            "end": "2026-07-14T16:30:00-06:00"
+          },
+          "calendar_conflict": false,
+          "conflict_events": [],
+          "validator_ok": true,
+          "violations": []
+        }
+      ]
+    },
+    {
+      "id": "lunch_exception",
+      "label": "Lunch request (exception-only)",
+      "subject": "TEST \u2014 lunch meeting request",
+      "body": "Only time I can meet is lunch next Tuesday \u2014 12:30 PM?",
+      "sender": "client@example.com",
+      "ok": false,
+      "path": "slot_engine",
+      "meeting_type": "lunch",
+      "write_calendar": "Calendar",
+      "slots": [],
+      "issues": [],
+      "failure_message": "Prospect times did not work; no alternatives found. Lunch meetings are exception-only unless Kory allows via memory/urgent. I couldn't find a meeting slot for that window. Should I try a different week? Engine diagnostics: {'candidates_scored': 0, 'urgent': False, 'block_minutes': 30, 'reserve_minutes': 30, 'meeting_type': 'lunch', 'meeting_type_label': 'Lunch Meeting', 'preferences_memory_count': 0, 'scheduling_window': None, 'time_of_day_window': None, 'allowed_weekdays': None, 'status': 'insufficient_slots'}",
+      "slot_checks": []
+    },
+    {
+      "id": "after_six_virtual",
+      "label": "After 6pm virtual only (should fail or find no valid 6:30 slots)",
+      "subject": "TEST \u2014 evening intro",
+      "body": "Could we do a 30-minute call at 6:30 PM MT next Thursday only?",
+      "sender": "evening@example.com",
+      "ok": false,
+      "path": "slot_engine",
+      "meeting_type": "referral_or_intro",
+      "write_calendar": "Calendar",
+      "slots": [],
+      "issues": [],
+      "failure_message": "I couldn't find a intro slot for that window. Should I try a different week? Engine diagnostics: {'candidates_scored': 0, 'urgent': False, 'block_minutes': 30, 'reserve_minutes': 30, 'meeting_type': 'referral_or_intro', 'meeting_type_label': 'Referral Advocate / General Intro', 'preferences_memory_count': 0, 'scheduling_window': None, 'time_of_day_window': {'start': '18:30', 'end': '19:00', 'label': '6:30 PM'}, 'allowed_weekdays': None, 'status': 'insufficient_slots'}",
+      "slot_checks": []
+    }
+  ]
+}

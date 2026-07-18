@@ -65,10 +65,10 @@ def resolve_composio_search_enabled() -> bool:
 
 
 def resolve_teams_inbound_notify_mode() -> str:
-    mode = os.getenv("LEXI_TEAMS_INBOUND_NOTIFY_MODE", "delegation_only").strip().lower()
-    if mode in {"delegation_only", "important", "all"}:
+    mode = os.getenv("LEXI_TEAMS_INBOUND_NOTIFY_MODE", "delegation_and_followups").strip().lower()
+    if mode in {"delegation_only", "delegation_and_followups", "important", "all"}:
         return mode
-    return "delegation_only"
+    return "delegation_and_followups"
 
 
 def resolve_default_send_channel() -> str:
@@ -138,7 +138,7 @@ class Settings:
         "LEXI_DELEGATION_AUTO_DRAFT", "true"
     ).lower() in {"1", "true", "yes"}
     lexi_delegation_cc_only: bool = os.getenv(
-        "LEXI_DELEGATION_CC_ONLY", "false"
+        "LEXI_DELEGATION_CC_ONLY", "true"
     ).lower() in {"1", "true", "yes"}
     lexi_teams_inbound_notify_mode: str = field(default_factory=resolve_teams_inbound_notify_mode)
     lexi_composio_search_enabled: bool = field(default_factory=resolve_composio_search_enabled)
@@ -153,6 +153,23 @@ class Settings:
     asana_composio_connection_id: str | None = (
         os.getenv("ASANA_COMPOSIO_CONNECTION_ID", "").strip() or None
     )
+    hubspot_composio_connection_id: str | None = (
+        os.getenv("HUBSPOT_COMPOSIO_CONNECTION_ID", "").strip() or None
+    )
+    # Explicit live-write kill switches for CRM/task systems. Keep false for UAT.
+    asana_live_writes_enabled: bool = os.getenv(
+        "LEXI_ASANA_LIVE_WRITES_ENABLED", "false"
+    ).lower() in {"1", "true", "yes"}
+    hubspot_live_writes_enabled: bool = os.getenv(
+        "LEXI_HUBSPOT_LIVE_WRITES_ENABLED", "false"
+    ).lower() in {"1", "true", "yes"}
+    # Outreach campaigns: stage locally by default; never send until enabled.
+    outreach_live_sends_enabled: bool = os.getenv(
+        "LEXI_OUTREACH_LIVE_SENDS_ENABLED", "false"
+    ).lower() in {"1", "true", "yes"}
+    outreach_outlook_drafts_enabled: bool = os.getenv(
+        "LEXI_OUTREACH_OUTLOOK_DRAFTS_ENABLED", "false"
+    ).lower() in {"1", "true", "yes"}
     asana_enabled: bool = os.getenv("ASANA_ENABLED", "false").lower() in {"1", "true", "yes"}
     lexi_teams_enabled: bool = os.getenv("LEXI_TEAMS_ENABLED", "false").lower() in {
         "1",
@@ -164,7 +181,13 @@ class Settings:
         "true",
         "yes",
     }
+    lexi_suppress_teams_push: bool = os.getenv(
+        "LEXI_SUPPRESS_TEAMS_PUSH", "false"
+    ).lower() in {"1", "true", "yes"}
     kory_sender_emails: tuple[str, ...] = field(default_factory=resolve_kory_sender_emails)
+    heidi_escalation_cc_kory: bool = os.getenv(
+        "HEIDI_ESCALATION_CC_KORY", "true"
+    ).lower() in {"1", "true", "yes"}
 
 
 settings = Settings()

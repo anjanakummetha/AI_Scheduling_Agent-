@@ -80,6 +80,59 @@ Expect: `lexi_local` database path, worker running, approval required.
 
 Watch Terminal C for trigger logs → Teams for notification/card.
 
+## Scheduling UAT (prospect → Kory → Lexi)
+
+You play the **person who wants to meet Kory**. Kory loops in Lexi (CC `lexi@iconicfounders.com`). With `delegation_only` notify mode, Lexi will **not** ping Teams on your prospect email alone — only after Kory delegates.
+
+### Step 1 — You (prospect) email Kory
+
+**From:** `anjana.kummetha@iconicfounders.com`  
+**To:** Kory’s inbox — **do not CC Lexi**  
+**Subject:** `TEST — 30-min intro call next week`  
+**Body:** e.g. “Hi Kory — would love to find 30 minutes for an intro call. What works on your end?”
+
+Lexi ingests and triages quietly (no Teams card yet).
+
+### Step 2 — Kory loops in Lexi
+
+From **Kory’s mailbox**, reply on that thread and **CC:** `lexi@iconicfounders.com`  
+**Body:** e.g. “Looping in Lexi — she’ll help us find a time.”
+
+Expected: Teams card with editable draft (Lexi voice) → **Send offer** → email from `lexi@` to you (Kory CC’d) → holds after send.
+
+### Step 3 — You (prospect) pick a time
+
+Reply to Lexi’s offer (“Option 1 works”) → Teams **Send calendar invite?** → approve → Outlook invite.
+
+### Optional — Kory voice
+
+Before approving **Send offer**, ask Hermes: `lexi_begin_draft_reply(<proposal_id>, voice_mode=kory)`.
+
+### “None of the times work”
+
+Reply “None of those times work — any other options?” → Teams **Find new times?** card.
+
+## Production-level settings (your Mac `.env`)
+
+These should be set for real sends (not sandbox loopback):
+
+```bash
+LEXI_DRY_RUN=false
+LEXI_WRITE_MODE=kory
+SANDBOX_EMAIL_LOOPBACK=false
+LEXI_KORY_OUTBOUND_BLOCKED=false
+LEXI_REQUIRE_KORY_APPROVAL=true
+LEXI_DELEGATION_AUTO_DRAFT=true
+LEXI_TEAMS_INBOUND_NOTIFY_MODE=delegation_only
+```
+
+Quick start all services:
+
+```bash
+chmod +x scripts/start_uat_test.sh
+./scripts/start_uat_test.sh
+```
+
 ## Switch back to VPS
 
 1. Stop local Hermes + `listen_outlook_local.py` (Ctrl+C).

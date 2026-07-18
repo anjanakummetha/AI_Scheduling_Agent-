@@ -1,0 +1,322 @@
+{
+  "generated_at": "2026-07-01T17:11:04.176515+00:00",
+  "window_hours": 24,
+  "dry_run": true,
+  "results": [
+    {
+      "subject": "Here's your Outreach Kaia meeting summary for \"Joe (Incline Equity) <> Kory (IFG) | 12:30p",
+      "sender": "no-reply@outreach.io",
+      "received_at": "2026-07-01T17:03:38Z",
+      "scheduling_reason": "podcast",
+      "ok": false,
+      "path": "inbound_availability",
+      "status": "inbound_times_invalid",
+      "timezone": "America/Los_Angeles",
+      "timezone_uncertain": false,
+      "timezone_source": "signature",
+      "formatted_slots": [
+        "Wednesday, July 8 at 12:00 AM\u201312:30 AM PT (1:00 AM\u20131:30 AM MT)",
+        "Monday, July 6 at 5:00 PM\u20135:30 PM PT (6:00 PM\u20136:30 PM MT)",
+        "Monday, July 6 at 12:00 AM\u201312:30 AM PT (1:00 AM\u20131:30 AM MT)"
+      ],
+      "slot_count": 3,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "Prospect proposed times but none meet calendar/rules: busy at Wednesday 01:00 AM; Option 1 (Monday 18:00 MT): after 6 PM is only allowed for planned dinners.; Option 1 (Monday 01:00 MT): earliest on Monday is 08:00 for this format.",
+      "draft_preview": "",
+      "fetch_error": ""
+    },
+    {
+      "subject": "Invitation: Asher/Daybreak @ Thu Jul 2, 2026 9:30am - 10am (MDT) (kory.mitchell@iconicfoun",
+      "sender": "scottwiegand@scalefirm.com",
+      "received_at": "2026-07-01T16:45:18Z",
+      "scheduling_reason": "meeting_request",
+      "ok": false,
+      "path": "inbound_availability",
+      "status": "inbound_times_invalid",
+      "timezone": "America/Denver",
+      "timezone_uncertain": false,
+      "timezone_source": "body",
+      "formatted_slots": [
+        "Thursday, July 2 at 2:00 AM\u20132:30 AM MT"
+      ],
+      "slot_count": 1,
+      "checks": {
+        "slots_found": false,
+        "timezone_handled": true,
+        "formatted_slots": false,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "Prospect proposed times but none meet calendar/rules: Option 1 (Thursday 02:00 MT): Kory is traveling this day \u2014 no new meetings (2\u20133 critical check-ins only).; Option 1 (Thursday 02:00 MT): Tue/Thu before 7 AM only for East Coast / urgent requests.",
+      "draft_preview": "",
+      "fetch_error": ""
+    },
+    {
+      "subject": "RE: TC with Natalie's Counsel",
+      "sender": "scottwiegand@scalefirm.com",
+      "received_at": "2026-07-01T16:43:57Z",
+      "scheduling_reason": "referral_or_intro",
+      "ok": true,
+      "path": "inbound_availability",
+      "status": "ok",
+      "timezone": "America/Denver",
+      "timezone_uncertain": false,
+      "timezone_source": "chain_area_code",
+      "formatted_slots": [
+        "Wednesday, July 1 at 5:00 PM\u20135:30 PM MT",
+        "Tuesday, July 7 at 4:00 PM\u20134:30 PM MT"
+      ],
+      "slot_count": 2,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "",
+      "draft_preview": "Hi Scott,\n\nI'm Lexi, Kory's assistant. Thanks for reaching out \u2014 I have a few times for a 30-minute virtual intro call on Teams:\n\n\u2022 Wednesday, July 1 at 5:00 PM\u20135:30 PM MT\n\u2022 Tuesday, July 7 at 4:00 PM\u20134:30 PM MT\n\nLet me know which works best and I can send a calendar invite.\n\nThank you,\nLexi\nAssistant to Kory Mitchell\nlexi@iconicfounders.com",
+      "fetch_error": ""
+    },
+    {
+      "subject": "Re: Fractional CFO Discussion - Frontier (Rusty) / IFG (Kory) / Fervent (Paul, Das)",
+      "sender": "wwallace@frontierdevelopmentinc.com",
+      "received_at": "2026-07-01T16:27:17Z",
+      "scheduling_reason": "lunch_request",
+      "ok": false,
+      "path": "inbound_availability",
+      "status": "inbound_times_invalid",
+      "timezone": "America/Chicago",
+      "timezone_uncertain": false,
+      "timezone_source": "chain_body",
+      "formatted_slots": [
+        "Wednesday, July 8 at 2:00 AM\u20133:00 AM CT (1:00 AM\u20132:00 AM MT)",
+        "Wednesday, July 1 at 6:00 PM\u20137:00 PM CT (5:00 PM\u20136:00 PM MT)",
+        "Wednesday, July 8 at 11:00 AM\u201312:00 PM CT (10:00 AM\u201311:00 AM MT)"
+      ],
+      "slot_count": 3,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "Prospect proposed times but none meet calendar/rules: busy at Wednesday 01:00 AM; busy at Wednesday 05:00 PM; busy at Wednesday 10:00 AM; Lunch meetings are exception-only unless Kory allows via memory/urgent.",
+      "draft_preview": "",
+      "fetch_error": ""
+    },
+    {
+      "subject": "RE: Fractional CFO Discussion - Frontier (Rusty) / IFG (Kory) / Fervent (Paul, Das)",
+      "sender": "pmackey@TeamFervent.com",
+      "received_at": "2026-07-01T16:13:43Z",
+      "scheduling_reason": "meeting_request",
+      "ok": false,
+      "path": "inbound_availability",
+      "status": "inbound_times_invalid",
+      "timezone": "America/Chicago",
+      "timezone_uncertain": false,
+      "timezone_source": "signature",
+      "formatted_slots": [
+        "Wednesday, July 1 at 6:00 PM\u20137:00 PM CT (5:00 PM\u20136:00 PM MT)",
+        "Wednesday, July 8 at 11:00 AM\u201312:00 PM CT (10:00 AM\u201311:00 AM MT)",
+        "Thursday, July 2 at 5:00 AM\u20136:00 AM CT (4:00 AM\u20135:00 AM MT)"
+      ],
+      "slot_count": 3,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "Prospect proposed times but none meet calendar/rules: busy at Wednesday 05:00 PM; busy at Wednesday 10:00 AM; Option 1 (Thursday 04:00 MT): Kory is traveling this day \u2014 no new meetings (2\u20133 critical check-ins only).; Option 1 (Thursday 04:00 MT): Tue/Thu before 7 AM only for East Coast / urgent requests.",
+      "draft_preview": "",
+      "fetch_error": ""
+    },
+    {
+      "subject": "Strengthen Your Team With Top Tier Finance Talent",
+      "sender": "Lori.Prato@remx.com",
+      "received_at": "2026-07-01T15:18:52Z",
+      "scheduling_reason": "pitch",
+      "ok": false,
+      "path": "slot_engine",
+      "status": "gate_blocked",
+      "timezone": null,
+      "timezone_uncertain": true,
+      "timezone_source": "unknown",
+      "formatted_slots": null,
+      "slot_count": 3,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": false,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "BLOCKED: slot 1 block is 60 min; expected 30 min for New Client Meeting; slot 2 block is 60 min; expected 30 min for New Client Meeting; slot 3 block is 60 min; expected 30 min for New Client Meeting Warnings: Some configured calendars are not visible via Composio (IFG Team, Kory & Heidi only, Deal Activity)",
+      "draft_preview": "",
+      "fetch_error": ""
+    },
+    {
+      "subject": "RE: TC with Natalie's Counsel",
+      "sender": "scottwiegand@scalefirm.com",
+      "received_at": "2026-07-01T15:15:06Z",
+      "scheduling_reason": "unknown",
+      "ok": true,
+      "path": "inbound_availability",
+      "status": "ok",
+      "timezone": "America/Denver",
+      "timezone_uncertain": false,
+      "timezone_source": "chain_area_code",
+      "formatted_slots": [
+        "Wednesday, July 1 at 5:00 PM\u20135:30 PM MT",
+        "Tuesday, July 7 at 4:00 PM\u20134:30 PM MT"
+      ],
+      "slot_count": 2,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "",
+      "draft_preview": "Hi Scott,\n\nI'm Lexi, Kory's assistant. Thanks for reaching out \u2014 I have a few times for a 30-minute virtual intro call on Teams:\n\n\u2022 Wednesday, July 1 at 5:00 PM\u20135:30 PM MT\n\u2022 Tuesday, July 7 at 4:00 PM\u20134:30 PM MT\n\nLet me know which works best and I can send a calendar invite.\n\nThank you,\nLexi\nAssistant to Kory Mitchell\nlexi@iconicfounders.com",
+      "fetch_error": ""
+    },
+    {
+      "subject": "Your Building Products M&A Update",
+      "sender": "dgood@mail.capstonepartners.com",
+      "received_at": "2026-07-01T15:12:09Z",
+      "scheduling_reason": "unknown",
+      "ok": true,
+      "path": "slot_engine",
+      "status": "ok",
+      "timezone": "America/New_York",
+      "timezone_uncertain": false,
+      "timezone_source": "signature",
+      "formatted_slots": [
+        "Tuesday, July 7 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)",
+        "Friday, July 10 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)",
+        "Friday, July 10 at 12:00 PM\u201312:30 PM ET (10:00 AM\u201310:30 AM MT)"
+      ],
+      "slot_count": 3,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "",
+      "draft_preview": "Hi Darin,\n\nI'm Lexi, Kory's assistant. Thanks for reaching out \u2014 I have a few times for a 30-minute virtual intro call on Teams:\n\n\u2022 Tuesday, July 7 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)\n\u2022 Friday, July 10 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)\n\u2022 Friday, July 10 at 12:00 PM\u201312:30 PM ET (10:00 AM\u201310:30 AM MT)\n\nLet me know which works best and I can send a calendar invite.\n\nThank you,\nLexi\nAssistant to Kory Mitchell\nlexi@iconicfounders.com",
+      "fetch_error": ""
+    },
+    {
+      "subject": "Accepted: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitchell | 3 pm ET",
+      "sender": "ramzi.dagher@myfirstbank.com",
+      "received_at": "2026-07-01T14:46:27Z",
+      "scheduling_reason": "referral_or_intro",
+      "ok": true,
+      "path": "slot_engine",
+      "status": "ok",
+      "timezone": "America/New_York",
+      "timezone_uncertain": false,
+      "timezone_source": "profile",
+      "formatted_slots": [
+        "Tuesday, July 7 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)",
+        "Friday, July 10 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)",
+        "Friday, July 10 at 12:00 PM\u201312:30 PM ET (10:00 AM\u201310:30 AM MT)"
+      ],
+      "slot_count": 3,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "",
+      "draft_preview": "Hi Ramzi,\n\nI'm Lexi, Kory's assistant. Thanks for reaching out \u2014 I have a few times for a 30-minute virtual intro call on Teams:\n\n\u2022 Tuesday, July 7 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)\n\u2022 Friday, July 10 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)\n\u2022 Friday, July 10 at 12:00 PM\u201312:30 PM ET (10:00 AM\u201310:30 AM MT)\n\nLet me know which works best and I can send a calendar invite.\n\nThank you,\nLexi\nAssistant to Kory Mitchell\nlexi@iconicfounders.com",
+      "fetch_error": ""
+    },
+    {
+      "subject": "RE: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitchell | 11:30 am ET",
+      "sender": "ramzi.dagher@myfirstbank.com",
+      "received_at": "2026-07-01T14:34:34Z",
+      "scheduling_reason": "referral_or_intro",
+      "ok": false,
+      "path": "inbound_availability",
+      "status": "inbound_times_invalid",
+      "timezone": "America/New_York",
+      "timezone_uncertain": false,
+      "timezone_source": "area_code",
+      "formatted_slots": [
+        "Tuesday, July 7 at 9:00 AM\u20139:30 AM ET (7:00 AM\u20137:30 AM MT)",
+        "Wednesday, July 8 at 3:00 AM\u20133:30 AM ET (1:00 AM\u20131:30 AM MT)",
+        "Friday, July 3 at 12:00 PM\u201312:30 PM ET (10:00 AM\u201310:30 AM MT)"
+      ],
+      "slot_count": 3,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "Prospect proposed times but none meet calendar/rules: Option 1 (Tuesday 07:00 MT): earliest on Tuesday is 09:00.; busy at Wednesday 01:00 AM; busy at Friday 10:00 AM; busy at Wednesday 10:00 AM",
+      "draft_preview": "",
+      "fetch_error": ""
+    },
+    {
+      "subject": "RE: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitchell | 11:30 am ET",
+      "sender": "ramzi.dagher@myfirstbank.com",
+      "received_at": "2026-07-01T14:15:52Z",
+      "scheduling_reason": "referral_or_intro",
+      "ok": false,
+      "path": "inbound_availability",
+      "status": "inbound_times_invalid",
+      "timezone": "America/New_York",
+      "timezone_uncertain": false,
+      "timezone_source": "area_code",
+      "formatted_slots": [
+        "Wednesday, July 8 at 3:00 AM\u20133:30 AM ET (1:00 AM\u20131:30 AM MT)",
+        "Wednesday, July 8 at 12:00 PM\u201312:30 PM ET (10:00 AM\u201310:30 AM MT)"
+      ],
+      "slot_count": 2,
+      "checks": {
+        "slots_found": true,
+        "timezone_handled": true,
+        "formatted_slots": true,
+        "draft_has_times": true,
+        "draft_nonempty": true
+      },
+      "passed": true,
+      "error": "Prospect proposed times but none meet calendar/rules: busy at Wednesday 01:00 AM; busy at Wednesday 10:00 AM",
+      "draft_preview": "",
+      "fetch_error": ""
+    }
+  ],
+  "summary": {
+    "total": 11,
+    "engine_ok": 4,
+    "checks_passed": 11
+  }
+}

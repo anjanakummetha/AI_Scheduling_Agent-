@@ -368,3 +368,360 @@ def _extract_task_id(data: Any) -> str | None:
         if isinstance(task, dict):
             return _extract_task_id(task)
     return None
+
+
+TaskBucket = Literal["overdue", "due_today", "upcoming", "all"]
+
+
+def create_asana_task_from_chat(
+    *,
+    title: str,
+    notes: str = "",
+    due_on: str = "",
+    approved: bool = False,
+) -> dict[str, Any]:
+    from app.safety.approval_gate import assert_kory_approved_write
+
+    assert_kory_approved_write(approved=approved, action="Asana create task")
+    result = _create_asana_task(title=title, notes=notes or title)
+    if due_on.strip() and result.get("ok") and result.get("task_id"):
+        update = update_asana_task(
+            task_gid=str(result["task_id"]),
+            due_on=due_on.strip(),
+            approved=approved,
+        )
+        result["due_update"] = update
+    return result
+
+
+def complete_asana_task(*, task_gid: str, approved: bool = False) -> dict[str, Any]:
+    from app.safety.approval_gate import assert_kory_approved_write
+
+    assert_kory_approved_write(approved=approved, action="Asana complete task")
+    if _should_simulate_asana():
+        return {"ok": True, "task_gid": task_gid, "simulated": True, "dry_run": True}
+    result = execute_asana_tool(
+        "ASANA_UPDATE_A_TASK",
+        {"task_gid": task_gid, "data": {"completed": True}},
+    )
+    return {
+        "ok": True,
+        "task_gid": task_gid,
+        "dry_run": bool(result.get("dry_run")),
+        "blocked_reason": (result.get("data") or {}).get("blocked_reason")
+        if isinstance(result.get("data"), dict)
+        else None,
+    }
+
+
+def update_asana_task(
+    *,
+    task_gid: str,
+    title: str = "",
+    notes: str = "",
+    due_on: str = "",
+    approved: bool = False,
+) -> dict[str, Any]:
+    """Update title/notes/due date — blocked unless live writes enabled."""
+    from app.safety.approval_gate import assert_kory_approved_write
+
+    assert_kory_approved_write(approved=approved, action="Asana update task")
+    data: dict[str, Any] = {}
+    if title.strip():
+        data["name"] = title.strip()
+    if notes.strip():
+        data["notes"] = notes.strip()
+    if due_on.strip():
+        data["due_on"] = due_on.strip()[:10]
+    if not data:
+        return {"ok": False, "error": "No fields to update."}
+    if _should_simulate_asana():
+        return {"ok": True, "task_gid": task_gid, "simulated": True, "dry_run": True, "data": data}
+    result = execute_asana_tool(
+        "ASANA_UPDATE_A_TASK",
+        {"task_gid": task_gid, "data": data},
+    )
+    return {
+        "ok": True,
+        "task_gid": task_gid,
+        "dry_run": bool(result.get("dry_run")),
+        "updated": data,
+    }
+
+
+def delete_asana_task(*, task_gid: str, approved: bool = False) -> dict[str, Any]:
+    from app.safety.approval_gate import assert_kory_approved_write
+
+    assert_kory_approved_write(approved=approved, action="Asana delete task")
+    if _should_simulate_asana():
+        return {"ok": True, "task_gid": task_gid, "simulated": True, "dry_run": True}
+    result = execute_asana_tool("ASANA_DELETE_A_TASK", {"task_gid": task_gid})
+    return {"ok": True, "task_gid": task_gid, "dry_run": bool(result.get("dry_run"))}
+
+
+def search_asana_tasks(*, query: str, limit: int = 15) -> dict[str, Any]:
+    """Search tasks by name across configured / related projects (read-only)."""
+    needle = query.strip().lower()
+    if not needle:
+        return {"ok": False, "tasks": [], "error": "query is required"}
+    projects = list_asana_project_options()
+    matches: list[dict[str, Any]] = []
+    for project in projects.get("projects", []):
+        listed = list_asana_tasks(
+            bucket="all",
+            limit=50,
+            project_gid=str(project.get("gid") or ""),
+            project_name=str(project.get("name") or ""),
+        )
+        for task in listed.get("tasks") or []:
+            name = str(task.get("name") or "").lower()
+            if needle in name:
+                matches.append({**task, "project": project.get("name")})
+    return {"ok": True, "query": query, "tasks": matches[:limit]}
+
+
+def move_asana_task_to_section(
+    *,
+    task_gid: str,
+    section_gid: str = "",
+    section_name: str = "",
+    approved: bool = False,
+) -> dict[str, Any]:
+    from app.safety.approval_gate import assert_kory_approved_write
+
+    assert_kory_approved_write(approved=approved, action="Asana move task section")
+    target = section_gid.strip() or settings.asana_section_gid or ""
+    if not target and section_name.strip():
+        return {
+            "ok": False,
+            "error": (
+                f"Section '{section_name}' needs a configured GID "
+                "(set ASANA_SECTION_GID or pass section_gid)."
+            ),
+            "dry_run": True,
+        }
+    if not target:
+        return {"ok": False, "error": "section_gid is required", "dry_run": True}
+    if _should_simulate_asana():
+        return {
+            "ok": True,
+            "task_gid": task_gid,
+            "section_gid": target,
+            "simulated": True,
+            "dry_run": True,
+        }
+    result = execute_asana_tool(
+        "ASANA_ADD_TASK_TO_SECTION",
+        {"task_gid": task_gid, "section_gid": target},
+    )
+    return {
+        "ok": True,
+        "task_gid": task_gid,
+        "section_gid": target,
+        "dry_run": bool(result.get("dry_run")),
+    }
+
+
+def comment_on_asana_task(
+    *,
+    task_gid: str,
+    comment: str,
+    approved: bool = False,
+) -> dict[str, Any]:
+    from app.safety.approval_gate import assert_kory_approved_write
+
+    assert_kory_approved_write(approved=approved, action="Asana comment")
+    text = comment.strip()
+    if not text:
+        return {"ok": False, "error": "comment is required"}
+    if _should_simulate_asana():
+        return {
+            "ok": True,
+            "task_gid": task_gid,
+            "comment": text,
+            "simulated": True,
+            "dry_run": True,
+        }
+    result = execute_asana_tool(
+        "ASANA_CREATE_A_STORY_COMMENT",
+        {"task_gid": task_gid, "text": text},
+    )
+    return {
+        "ok": True,
+        "task_gid": task_gid,
+        "comment": text,
+        "dry_run": bool(result.get("dry_run")),
+    }
+
+
+def list_asana_project_options() -> dict[str, Any]:
+    """Configured NON-IFG plus optional related project GIDs (Call List, etc.)."""
+    import os
+
+    projects: list[dict[str, str]] = []
+    if settings.asana_project_gid:
+        projects.append(
+            {
+                "gid": settings.asana_project_gid,
+                "name": ASANA_PARENT_PROJECT_NAME,
+            }
+        )
+    extra = os.getenv("ASANA_RELATED_PROJECT_GIDS", "").strip()
+    # Format: name:gid,name:gid
+    for part in extra.split(",") if extra else []:
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            name, gid = part.split(":", 1)
+            projects.append({"gid": gid.strip(), "name": name.strip() or gid.strip()})
+        else:
+            projects.append({"gid": part, "name": part})
+    # Deduplicate by gid
+    seen: set[str] = set()
+    unique: list[dict[str, str]] = []
+    for row in projects:
+        gid = row["gid"]
+        if gid in seen:
+            continue
+        seen.add(gid)
+        unique.append(row)
+    return {"ok": True, "projects": unique}
+
+
+def list_asana_tasks(
+    *,
+    bucket: TaskBucket = "all",
+    limit: int = 25,
+    project_gid: str = "",
+    project_name: str = "",
+) -> dict[str, Any]:
+    """List tasks from Kory NON-IFG (or related) project — read-only."""
+    if _should_simulate_asana() and not project_gid:
+        return _simulated_asana_tasks(bucket=bucket)
+
+    target_gid = project_gid.strip() or settings.asana_project_gid
+    if not target_gid:
+        return {"ok": False, "tasks": [], "error": "ASANA_PROJECT_GID not set"}
+
+    try:
+        result = execute_asana_tool(
+            "ASANA_GET_TASKS_FROM_A_PROJECT",
+            {"project_gid": target_gid, "limit": max(1, min(limit, 100))},
+        )
+    except Exception:
+        try:
+            result = execute_asana_tool(
+                "ASANA_GET_MULTIPLE_TASKS",
+                {"project": target_gid, "limit": max(1, min(limit, 100))},
+            )
+        except Exception as exc:
+            return {"ok": False, "tasks": [], "error": str(exc)}
+
+    tasks = _normalize_asana_tasks(result.get("data"))
+    for task in tasks:
+        if project_name:
+            task["project"] = project_name
+    filtered = _filter_tasks_by_bucket(tasks, bucket=bucket)
+    return {
+        "ok": True,
+        "bucket": bucket,
+        "project_gid": target_gid,
+        "project_name": project_name or ASANA_PARENT_PROJECT_NAME,
+        "tasks": filtered[:limit],
+        "composio_log_id": result.get("log_id"),
+        "dry_run": result.get("dry_run", False),
+    }
+
+
+def summarize_asana_for_briefing() -> str:
+    overdue = list_asana_tasks(bucket="overdue", limit=5)
+    today = list_asana_tasks(bucket="due_today", limit=5)
+    lines = ["**Asana:**"]
+    if overdue.get("tasks"):
+        lines.append(f"Overdue ({len(overdue['tasks'])}):")
+        for t in overdue["tasks"][:5]:
+            lines.append(f"• {t.get('name')}")
+    else:
+        lines.append("Overdue: none in sample")
+    if today.get("tasks"):
+        lines.append(f"Due today ({len(today['tasks'])}):")
+        for t in today["tasks"][:5]:
+            lines.append(f"• {t.get('name')}")
+    else:
+        lines.append("Due today: none in sample")
+    return "\n".join(lines)
+
+
+def _normalize_asana_tasks(data: Any) -> list[dict[str, Any]]:
+    rows: list[Any] = []
+    if isinstance(data, list):
+        rows = data
+    elif isinstance(data, dict):
+        for key in ("data", "tasks", "value"):
+            nested = data.get(key)
+            if isinstance(nested, list):
+                rows = nested
+                break
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            {
+                "gid": row.get("gid") or row.get("id"),
+                "name": row.get("name") or row.get("title"),
+                "due_on": row.get("due_on") or row.get("due_at"),
+                "completed": bool(row.get("completed")),
+                "notes": (row.get("notes") or "")[:300] or None,
+            }
+        )
+    return out
+
+
+def _filter_tasks_by_bucket(tasks: list[dict[str, Any]], *, bucket: TaskBucket) -> list[dict[str, Any]]:
+    from datetime import date
+
+    today = date.today().isoformat()
+    active = [t for t in tasks if not t.get("completed")]
+    if bucket == "all":
+        return active
+    if bucket == "due_today":
+        return [t for t in active if (t.get("due_on") or "")[:10] == today]
+    if bucket == "overdue":
+        return [t for t in active if (t.get("due_on") or "")[:10] < today and t.get("due_on")]
+    if bucket == "upcoming":
+        return [t for t in active if (t.get("due_on") or "")[:10] > today]
+    return active
+
+
+def _simulated_asana_tasks(*, bucket: TaskBucket) -> dict[str, Any]:
+    samples = [
+        {
+            "gid": "sim-1",
+            "name": "Follow up investor intro",
+            "due_on": "2026-07-15",
+            "completed": False,
+            "project": ASANA_PARENT_PROJECT_NAME,
+        },
+        {
+            "gid": "sim-2",
+            "name": "Book dinner reservation",
+            "due_on": "2026-07-16",
+            "completed": False,
+            "project": ASANA_PARENT_PROJECT_NAME,
+        },
+        {
+            "gid": "sim-3",
+            "name": "Call List — reconnect Jane",
+            "due_on": "2026-07-20",
+            "completed": False,
+            "project": "Call List",
+        },
+    ]
+    return {
+        "ok": True,
+        "bucket": bucket,
+        "tasks": _filter_tasks_by_bucket(samples, bucket=bucket),
+        "simulated": True,
+    }

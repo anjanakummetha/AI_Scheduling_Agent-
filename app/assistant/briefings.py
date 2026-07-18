@@ -1,0 +1,359 @@
+"""Kory morning briefings — unanswered mail, today's calendar, pre-meeting briefs."""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from app.agents.inbound_filter import is_newsletter_or_bulk_mail, is_no_reply_needed_mail
+from app.config import settings
+from app.scheduling.introducer import (
+    format_introducer_line,
+    resolve_introducer_for_contact,
+)
+
+_KORY_LOCAL_PARTS = ("kory", "kory.mitchell")
+_ACTION_CUES = ("?", "let me know", "please", "can you", "could you", "waiting", "when works")
+
+
+def _kory_tz() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.scheduling_timezone)
+    except Exception:
+        return ZoneInfo("America/Denver")
+
+
+def _is_from_kory(sender: str | None) -> bool:
+    low = (sender or "").lower()
+    if not low:
+        return False
+    for email in settings.kory_sender_emails:
+        if email in low:
+            return True
+    return any(part in low for part in _KORY_LOCAL_PARTS)
+
+
+def _needs_kory_reply(*, sender: str, subject: str, preview: str) -> bool:
+    if _is_from_kory(sender):
+        return False
+    if is_no_reply_needed_mail(sender=sender, subject=subject, body=preview):
+        return False
+    if is_newsletter_or_bulk_mail(sender=sender, subject=subject, body=preview):
+        return False
+    text = f"{subject}\n{preview}".lower()
+    if any(cue in text for cue in _ACTION_CUES):
+        return True
+    if re.search(r"\b(schedule|meet|coffee|call|intro|connect|available)\b", text):
+        return True
+    return "?" in text
+
+
+def build_unanswered_brief(*, hours: int = 72, limit: int = 12) -> dict[str, Any]:
+    """Emails that look relevant where Kory hasn't replied yet."""
+    from app.integrations.outlook_inbox import search_inbox
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    try:
+        messages, log_id = search_inbox(top=50)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "kory_message": f"Couldn't read your inbox ({type(exc).__name__}). Try again shortly.",
+        }
+
+    items: list[dict[str, Any]] = []
+    for msg in messages:
+        received_raw = msg.get("received_at") or ""
+        try:
+            received = datetime.fromisoformat(received_raw.replace("Z", "+00:00"))
+            if received.tzinfo is None:
+                received = received.replace(tzinfo=timezone.utc)
+        except ValueError:
+            received = datetime.now(timezone.utc)
+        if received < cutoff:
+            continue
+        sender = str(msg.get("sender") or "")
+        subject = str(msg.get("subject") or "(no subject)")
+        preview = str(msg.get("preview") or "")
+        if not _needs_kory_reply(sender=sender, subject=subject, preview=preview):
+            continue
+        items.append(
+            {
+                "subject": subject,
+                "sender": sender,
+                "sender_name": msg.get("sender_name"),
+                "received_at": received_raw,
+                "preview": preview[:200],
+            }
+        )
+
+    lines = [f"**Unanswered — last {hours} hours**\n"]
+    if not items:
+        lines.append("_No obvious unanswered threads in this window._")
+    else:
+        for row in items[:limit]:
+            who = row.get("sender_name") or row.get("sender") or "unknown"
+            lines.append(f"• **{row['subject']}** — {who}")
+            if row.get("preview"):
+                lines.append(f"  _{row['preview'][:140]}_")
+        if len(items) > limit:
+            lines.append(f"\n_…and {len(items) - limit} more._")
+
+    return {
+        "ok": True,
+        "count": len(items),
+        "composio_log_id": log_id,
+        "kory_message": "\n".join(lines),
+    }
+
+
+def build_today_calendar_brief() -> dict[str, Any]:
+    """Today's meetings on Kory's calendar (Mountain Time day boundary)."""
+    tz = _kory_tz()
+    now_local = datetime.now(tz)
+    start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    start_iso = start.isoformat()
+    end_iso = end.isoformat()
+
+    try:
+        from app.integrations.outlook_calendar import get_calendar_events
+
+        events, log_id = get_calendar_events(start_iso, end_iso)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "kory_message": f"Couldn't load today's calendar ({type(exc).__name__}).",
+        }
+
+    meetings = [
+        e
+        for e in events
+        if not e.get("isCancelled")
+        and str(e.get("showAs") or "").lower() not in {"free", "workingelsewhere"}
+    ]
+    meetings.sort(key=lambda e: str(e.get("start") or ""))
+
+    date_label = now_local.strftime("%A, %B %d").replace(" 0", " ")
+    lines = [f"**Calendar today — {date_label}**\n"]
+    if not meetings:
+        lines.append("_No meetings on the calendar today._")
+    else:
+        for event in meetings[:20]:
+            subject = str(event.get("subject") or "(no title)")
+            start_t = _format_event_time(event.get("start"), tz)
+            lines.append(f"• **{start_t}** — {subject}")
+            attendees = event.get("attendees") or []
+            if attendees:
+                names = ", ".join(str(a) for a in attendees[:3])
+                lines.append(f"  _With: {names}_")
+
+    return {
+        "ok": True,
+        "meeting_count": len(meetings),
+        "composio_log_id": log_id,
+        "events": meetings[:20],
+        "kory_message": "\n".join(lines),
+    }
+
+
+def build_prebrief(
+    *,
+    attendee_name: str = "",
+    attendee_email: str = "",
+    meeting_subject: str = "",
+    include_research: bool = True,
+) -> dict[str, Any]:
+    """Single pre-meeting brief with introducer + optional research."""
+    email = attendee_email.strip()
+    name = attendee_name.strip()
+    lines = [f"**Pre-meeting brief**"]
+    if meeting_subject:
+        lines.append(f"**Meeting:** {meeting_subject}")
+    if name or email:
+        lines.append(f"**With:** {name or email}")
+
+    intro = resolve_introducer_for_contact(email=email or "guest@unknown.io", sender=name)
+    lines.append(format_introducer_line(intro))
+
+    if email or name:
+        try:
+            from app.integrations.hubspot_manager import enrich_prebrief_from_hubspot
+
+            hs = enrich_prebrief_from_hubspot(email=email, name=name)
+            if hs.get("ok") and hs.get("found"):
+                lines.append("")
+                lines.append(hs.get("kory_message", ""))
+        except Exception:
+            pass
+
+    research_block = ""
+    if include_research and (name or email):
+        try:
+            from app.integrations.person_research import research_person
+
+            bundle = research_person(
+                name or email.split("@", 1)[0],
+                email=email,
+                include_inbox=True,
+                include_news=False,
+            )
+            summary = (bundle.get("web_summary") or "").strip()
+            if summary:
+                research_block = summary[:1200]
+                lines.append("\n**Background:**")
+                lines.append(research_block)
+            threads = bundle.get("prior_threads") or []
+            if threads:
+                lines.append("\n**Prior threads:**")
+                for t in threads[:3]:
+                    lines.append(f"• {t.get('subject') or '(no subject)'}")
+        except Exception as exc:
+            lines.append(f"\n_Research skipped ({type(exc).__name__})._")
+
+    return {
+        "ok": True,
+        "attendee_email": email or None,
+        "attendee_name": name or None,
+        "introducer": intro.__dict__ if intro else None,
+        "kory_message": "\n".join(lines),
+    }
+
+
+def build_prebriefs_for_today(*, include_research: bool = False) -> dict[str, Any]:
+    """Prebrief stub for each meeting today (research off by default to save API)."""
+    cal = build_today_calendar_brief()
+    if not cal.get("ok"):
+        return cal
+
+    events = cal.get("events") or []
+    if not events:
+        return {
+            "ok": True,
+            "count": 0,
+            "kory_message": "**Pre-meeting briefs**\n\n_No meetings today — nothing to brief._",
+        }
+
+    sections: list[str] = ["**Pre-meeting briefs — today**\n"]
+    for event in events[:8]:
+        subject = str(event.get("subject") or "Meeting")
+        attendee_email, attendee_name = _guess_external_attendee(event)
+        brief = build_prebrief(
+            attendee_name=attendee_name,
+            attendee_email=attendee_email,
+            meeting_subject=subject,
+            include_research=include_research,
+        )
+        sections.append(brief.get("kory_message", ""))
+        sections.append("")
+
+    return {
+        "ok": True,
+        "count": len(events),
+        "kory_message": "\n".join(sections).strip(),
+    }
+
+
+def build_daily_ceo_briefing() -> dict[str, Any]:
+    """4:45 AM MT package — calendar, unanswered, pending approvals, Asana due."""
+    tz = _kory_tz()
+    now_local = datetime.now(tz)
+    header = f"**CEO briefing — {now_local.strftime('%A, %B %d').replace(' 0', ' ')}**\n"
+
+    parts = [header]
+
+    cal = build_today_calendar_brief()
+    parts.append(cal.get("kory_message", ""))
+    parts.append("")
+
+    unanswered = build_unanswered_brief(hours=48)
+    parts.append(unanswered.get("kory_message", ""))
+    parts.append("")
+
+    pending = _pending_approval_summary()
+    parts.append(pending)
+    parts.append("")
+
+    asana = _asana_due_summary()
+    parts.append(asana)
+    parts.append("")
+
+    deals = _hubspot_deals_summary()
+    parts.append(deals)
+
+    prebrief_note = (
+        "\n_Say **prebrief** for meeting context (who introduced + research)._"
+    )
+    parts.append(prebrief_note)
+
+    return {
+        "ok": True,
+        "generated_at": now_local.isoformat(),
+        "kory_message": "\n".join(parts).strip(),
+    }
+
+
+def _pending_approval_summary() -> str:
+    from app.agents.comms_agent import get_lexi_pending_queue
+
+    items = get_lexi_pending_queue()
+    if not items:
+        return "**Pending approvals:** None — you're caught up on Lexi drafts."
+    lines = [f"**Pending approvals:** {len(items)} draft(s) waiting\n"]
+    for item in items[:5]:
+        lines.append(f"• {item.subject} — {item.sender}")
+    if len(items) > 5:
+        lines.append(f"_…and {len(items) - 5} more. Say `pending`._")
+    return "\n".join(lines)
+
+
+def _asana_due_summary() -> str:
+    try:
+        from app.integrations.asana_manager import summarize_asana_for_briefing
+
+        return summarize_asana_for_briefing()
+    except Exception as exc:
+        return f"**Asana:** unavailable ({type(exc).__name__})."
+
+
+def _hubspot_deals_summary() -> str:
+    try:
+        from app.integrations.hubspot_manager import deals_snapshot_for_brief
+
+        snap = deals_snapshot_for_brief(limit=5)
+        return snap.get("kory_message", "**Deals:** unavailable.")
+    except Exception as exc:
+        return f"**Deals:** unavailable ({type(exc).__name__})."
+
+
+def _format_event_time(raw: Any, tz: ZoneInfo) -> str:
+    if isinstance(raw, dict):
+        raw = raw.get("dateTime") or raw.get("date") or ""
+    if not raw:
+        return "?"
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(tz).strftime("%I:%M %p").lstrip("0")
+    except ValueError:
+        return str(raw)[:16]
+
+
+def _guess_external_attendee(event: dict[str, Any]) -> tuple[str, str]:
+    attendees = event.get("attendees") or []
+    for addr in attendees:
+        low = str(addr).lower()
+        if _is_from_kory(low):
+            continue
+        if "iconicfounders" in low or "ifg.vc" in low:
+            continue
+        if "@" in low:
+            local = low.split("@", 1)[0].replace(".", " ").title()
+            return low, local
+    subject = str(event.get("subject") or "")
+    return "", subject.split("—")[0].strip() or subject.split("-")[0].strip()

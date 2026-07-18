@@ -14,12 +14,16 @@ from app.integrations.outlook_email import (
     create_draft_reply,
     send_draft,
     send_pilot_reply_for_proposal,
+    send_reply_in_thread,
 )
 from app.config import settings
 from app.storage.lexi_db import get_lexi_connection
 from app.utils.teams_cards import generate_approval_card
 
 PENDING_APPROVAL = "pending_approval"
+STATUS_OFFER_SENT = "offer_sent"
+STATUS_PENDING_INVITE = "pending_invite"
+STATUS_PENDING_REOFFER = "pending_reoffer"
 STATUS_EXECUTED = "executed"
 STATUS_REJECTED = "rejected"
 
@@ -76,6 +80,201 @@ class ExecutionResult:
         return asdict(self)
 
 
+def execute_lexi_invite(
+    proposal_id: int,
+    selected_slot: str,
+    authorized_by: str,
+    *,
+    decision_source: str = "teams_card",
+    modification_notes: str | None = None,
+) -> ExecutionResult:
+    """Send Outlook invite after recipient picked a slot and Kory approved."""
+    return execute_lexi_approval(
+        proposal_id=proposal_id,
+        decision="approved",
+        selected_slot=selected_slot,
+        authorized_by=authorized_by,
+        decision_source=decision_source,
+        modification_notes=modification_notes,
+        execution_phase="send_invite",
+    )
+
+
+def get_lexi_invite_queue() -> list[LexiQueueItem]:
+    """Proposals waiting for Kory to approve sending the calendar invite."""
+    with get_lexi_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                p.id AS proposal_id,
+                p.thread_id,
+                p.intent_classification,
+                p.priority_tier,
+                p.proposed_slots,
+                p.drafted_reply,
+                p.confidence_score,
+                p.justification,
+                p.voice_mode,
+                p.recipient_selected_slot,
+                e.subject,
+                e.sender,
+                e.raw_body
+            FROM proposals AS p
+            INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+            WHERE p.status = ?
+            ORDER BY p.id ASC
+            """,
+            (STATUS_PENDING_INVITE,),
+        ).fetchall()
+
+        items: list[LexiQueueItem] = []
+        for row in rows:
+            proposal_id = int(row["proposal_id"])
+            holds = _fetch_holds(conn, proposal_id)
+            proposal_record = {
+                "id": proposal_id,
+                "thread_id": row["thread_id"],
+                "intent_classification": row["intent_classification"],
+                "priority_tier": row["priority_tier"],
+                "drafted_reply": row["drafted_reply"],
+                "justification": row["justification"],
+                "confidence_score": row["confidence_score"],
+                "voice_mode": row["voice_mode"],
+                "proposed_slots": _parse_json_list(row["proposed_slots"]),
+                "recipient_selected_slot": row["recipient_selected_slot"],
+            }
+            email_record = {
+                "subject": row["subject"],
+                "sender": row["sender"],
+                "raw_body": row["raw_body"],
+            }
+            from app.utils.teams_cards import generate_invite_prompt_card
+
+            approval_card = generate_invite_prompt_card(
+                proposal_record,
+                email_record,
+                holds,
+            )
+            items.append(
+                LexiQueueItem(
+                    proposal_id=proposal_id,
+                    thread_id=str(row["thread_id"]),
+                    subject=row["subject"],
+                    sender=row["sender"],
+                    raw_body=row["raw_body"],
+                    intent_classification=row["intent_classification"],
+                    priority_tier=row["priority_tier"],
+                    proposed_slots=proposal_record["proposed_slots"],
+                    drafted_reply=row["drafted_reply"],
+                    confidence_score=row["confidence_score"],
+                    justification=row["justification"],
+                    voice_mode=row["voice_mode"],
+                    holds=holds,
+                    approval_card=approval_card,
+                )
+            )
+        return items
+
+
+def mark_recipient_slot_choice(
+    proposal_id: int,
+    selected_slot: dict[str, str],
+    *,
+    reply_body: str = "",
+) -> dict[str, Any]:
+    """Store recipient's chosen slot and move proposal to pending_invite."""
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM proposals WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": f"Proposal {proposal_id} not found."}
+        if row["status"] != STATUS_OFFER_SENT:
+            return {
+                "ok": False,
+                "error": f"Proposal {proposal_id} is not awaiting recipient reply (status={row['status']}).",
+            }
+        conn.execute(
+            """
+            UPDATE proposals
+            SET status = ?, recipient_selected_slot = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (
+                STATUS_PENDING_INVITE,
+                json.dumps(selected_slot),
+                proposal_id,
+            ),
+        )
+        _insert_audit_log(
+            conn,
+            step_name="recipient_slot_choice",
+            reference_id=str(proposal_id),
+            log_level="INFO",
+            message="Recipient selected a meeting slot.",
+            payload={"proposal_id": proposal_id, "selected_slot": selected_slot, "reply_body": reply_body[:500]},
+        )
+        conn.commit()
+    return {"ok": True, "proposal_id": proposal_id, "status": STATUS_PENDING_INVITE}
+
+
+def mark_recipient_reoffer_request(
+    proposal_id: int,
+    *,
+    reply_body: str = "",
+) -> dict[str, Any]:
+    """Recipient declined offered times — release holds and ask Kory for a new round."""
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM proposals WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": f"Proposal {proposal_id} not found."}
+        if row["status"] != STATUS_OFFER_SENT:
+            return {
+                "ok": False,
+                "error": f"Proposal {proposal_id} is not awaiting recipient reply (status={row['status']}).",
+            }
+        dummy = ExecutionResult(
+            ok=False,
+            proposal_id=proposal_id,
+            status=STATUS_OFFER_SENT,
+            decision="reoffer",
+            warnings=[],
+            errors=[],
+        )
+        released = _release_all_holds(conn, proposal_id, dummy)
+        conn.execute(
+            """
+            UPDATE proposals
+            SET status = ?, recipient_selected_slot = NULL, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (STATUS_PENDING_REOFFER, proposal_id),
+        )
+        _insert_audit_log(
+            conn,
+            step_name="recipient_reoffer_request",
+            reference_id=str(proposal_id),
+            log_level="INFO",
+            message="Recipient indicated offered times do not work.",
+            payload={
+                "proposal_id": proposal_id,
+                "holds_released": released,
+                "reply_body": reply_body[:500],
+            },
+        )
+        conn.commit()
+    return {
+        "ok": True,
+        "proposal_id": proposal_id,
+        "status": STATUS_PENDING_REOFFER,
+        "holds_released": released,
+    }
+
+
 def get_lexi_pending_queue() -> list[LexiQueueItem]:
     """Return pending_approval proposals joined with source email thread metadata."""
     with get_lexi_connection() as conn:
@@ -91,6 +290,7 @@ def get_lexi_pending_queue() -> list[LexiQueueItem]:
                 p.confidence_score,
                 p.justification,
                 p.voice_mode,
+                COALESCE(p.recipient_timezone, e.recipient_timezone) AS recipient_timezone,
                 e.subject,
                 e.sender,
                 e.raw_body
@@ -122,6 +322,7 @@ def get_lexi_pending_queue() -> list[LexiQueueItem]:
                 "confidence_score": row["confidence_score"],
                 "voice_mode": row["voice_mode"],
                 "proposed_slots": _parse_json_list(row["proposed_slots"]),
+                "recipient_timezone": row["recipient_timezone"] if "recipient_timezone" in row.keys() else None,
             }
             email_record = {
                 "subject": row["subject"],
@@ -158,8 +359,14 @@ def execute_lexi_approval(
     *,
     decision_source: str = "teams_card",
     modification_notes: str | None = None,
+    execution_phase: str = "send_offer",
 ) -> ExecutionResult:
-    """Record approval decision and dispatch calendar/email execution via Composio."""
+    """Record approval decision and dispatch calendar/email execution via Composio.
+
+    Phases:
+    - send_offer: Kory approves the time-offer email (holds stay on calendar).
+    - send_invite: Kory approves sending the Outlook invite after recipient picked a slot.
+    """
     normalized_decision = decision.strip().lower()
     if normalized_decision not in {"approved", "modified", "rejected"}:
         raise ValueError("decision must be one of: approved, modified, rejected")
@@ -179,10 +386,39 @@ def execute_lexi_approval(
             proposal = _fetch_proposal_bundle(conn, proposal_id)
             if not proposal:
                 raise ValueError(f"Proposal {proposal_id} was not found.")
-            if proposal["status"] != PENDING_APPROVAL:
-                raise ValueError(
-                    f"Proposal {proposal_id} is not pending approval (status={proposal['status']})."
-                )
+            phase = (execution_phase or "send_offer").strip().lower()
+            if phase not in {"send_offer", "send_invite"}:
+                raise ValueError("execution_phase must be send_offer or send_invite")
+
+            status = str(proposal["status"] or "")
+            if normalized_decision == "rejected":
+                if status not in {
+                    PENDING_APPROVAL,
+                    STATUS_OFFER_SENT,
+                    STATUS_PENDING_INVITE,
+                }:
+                    raise ValueError(
+                        f"Proposal {proposal_id} cannot be rejected (status={status})."
+                    )
+            elif phase == "send_offer":
+                if status == STATUS_OFFER_SENT and normalized_decision in {"approved", "modified"}:
+                    result.status = STATUS_OFFER_SENT
+                    result.ok = True
+                    result.warnings = (result.warnings or []) + [
+                        "Offer already sent for this proposal; no duplicate email dispatched."
+                    ]
+                    conn.execute("RELEASE SAVEPOINT lexi_execution")
+                    conn.commit()
+                    return result
+                if status != PENDING_APPROVAL:
+                    raise ValueError(
+                        f"Proposal {proposal_id} is not pending draft approval (status={status})."
+                    )
+            elif phase == "send_invite":
+                if status not in {STATUS_PENDING_INVITE, STATUS_OFFER_SENT}:
+                    raise ValueError(
+                        f"Proposal {proposal_id} is not ready for invite dispatch (status={status})."
+                    )
 
             _insert_approval(
                 conn,
@@ -200,66 +436,92 @@ def execute_lexi_approval(
                 result.status = STATUS_REJECTED
                 result.ok = True
             else:
-                slots = proposal.get("proposed_slots") or []
-                holds = proposal.get("holds") or []
-                confirmed_id: str | None = None
-                selected: dict[str, str] = {}
+                if phase == "send_offer":
+                    from app.scheduling.hold_reminder import is_hold_reminder_proposal
 
-                if slots or holds:
-                    selected = _resolve_selected_slot(proposal, selected_slot)
-                    confirmed_id, hold_errors = _confirm_selected_hold(
-                        conn,
-                        proposal_id=proposal_id,
-                        proposal=proposal,
-                        selected_slot=selected,
-                        result=result,
-                    )
-                    result.errors.extend(hold_errors)
-                    result.calendar_event_id = confirmed_id
-                    result.holds_confirmed = 1 if confirmed_id else 0
-
-                    released = _release_unused_holds(
-                        conn,
-                        proposal_id,
-                        keep_event_id=confirmed_id,
-                        result=result,
-                    )
-                    result.holds_released = released
-
+                    hold_reminder = is_hold_reminder_proposal(proposal)
+                    email_ok, email_error = _send_drafted_reply(proposal, result)
+                    result.email_sent = email_ok
+                    if email_error:
+                        result.errors.append(email_error)
+                    if email_ok:
+                        if hold_reminder:
+                            _insert_audit_log(
+                                conn,
+                                step_name="hold_reminder_sent",
+                                reference_id=str(proposal_id),
+                                message="Hold reminder email sent after Kory approval.",
+                                payload={"proposal_id": proposal_id},
+                            )
+                            conn.execute(
+                                """
+                                UPDATE proposals
+                                SET scheduling_note = NULL, updated_at = datetime('now')
+                                WHERE id = ?
+                                """,
+                                (proposal_id,),
+                            )
+                            _set_proposal_status(conn, proposal_id, STATUS_OFFER_SENT)
+                            result.status = STATUS_OFFER_SENT
+                            result.warnings = (result.warnings or []) + [
+                                "Hold reminder sent — existing calendar holds unchanged."
+                            ]
+                        else:
+                            hold_count, hold_error = _place_holds_after_offer(
+                                conn, proposal_id=proposal_id, proposal=proposal, result=result
+                            )
+                            if hold_error:
+                                result.errors.append(hold_error)
+                                result.warnings = (result.warnings or []) + [hold_error]
+                            result.holds_confirmed = hold_count
+                            _dispatch_asana_reservation_reminder_if_needed(
+                                conn,
+                                proposal_id=proposal_id,
+                                proposal=proposal,
+                                time_slot="",
+                                result=result,
+                            )
+                            _set_proposal_status(conn, proposal_id, STATUS_OFFER_SENT)
+                            result.status = STATUS_OFFER_SENT
+                    else:
+                        result.status = PENDING_APPROVAL
+                    result.ok = email_ok
                 else:
-                    released = _release_unused_holds(
-                        conn,
-                        proposal_id,
-                        keep_event_id=None,
-                        result=result,
-                    )
-                    result.holds_released = released
+                    slots = proposal.get("proposed_slots") or []
+                    holds = proposal.get("holds") or []
+                    confirmed_id: str | None = None
+                    selected: dict[str, str] = {}
 
-                email_ok, email_error = _send_drafted_reply(proposal, result)
-                result.email_sent = email_ok
-                if email_error:
-                    result.errors.append(email_error)
+                    stored_slot = _parse_recipient_selected_slot(proposal)
+                    if stored_slot:
+                        selected = stored_slot
+                    elif slots or holds:
+                        selected = _resolve_selected_slot(proposal, selected_slot)
 
-                if email_ok:
-                    time_slot = ""
                     if selected:
-                        time_slot = f"{selected.get('start', '')} → {selected.get('end', '')}"
-                    _dispatch_asana_reservation_reminder_if_needed(
-                        conn,
-                        proposal_id=proposal_id,
-                        proposal=proposal,
-                        time_slot=time_slot,
-                        result=result,
-                    )
+                        confirmed_id, hold_errors = _confirm_selected_hold(
+                            conn,
+                            proposal_id=proposal_id,
+                            proposal=proposal,
+                            selected_slot=selected,
+                            result=result,
+                        )
+                        result.errors.extend(hold_errors)
+                        result.calendar_event_id = confirmed_id
+                        result.holds_confirmed = 1 if confirmed_id else 0
+                        released = _release_unused_holds(
+                            conn,
+                            proposal_id,
+                            keep_event_id=confirmed_id,
+                            result=result,
+                        )
+                        result.holds_released = released
 
-                _set_proposal_status(conn, proposal_id, STATUS_EXECUTED)
-                result.status = STATUS_EXECUTED
-                result.ok = result.holds_confirmed > 0 or bool(confirmed_id)
-                if email_ok:
-                    result.ok = True
-                if result.errors and not result.ok:
-                    result.warnings = list(result.errors)
-                    result.ok = result.holds_confirmed > 0
+                    _set_proposal_status(conn, proposal_id, STATUS_EXECUTED)
+                    result.status = STATUS_EXECUTED
+                    result.ok = bool(confirmed_id)
+                    if result.errors and not result.ok:
+                        result.warnings = list(result.errors)
 
             _insert_audit_log(
                 conn,
@@ -281,6 +543,22 @@ def execute_lexi_approval(
             )
             conn.execute("RELEASE SAVEPOINT lexi_execution")
             conn.commit()
+            if (
+                phase == "send_offer"
+                and normalized_decision in {"approved", "modified"}
+                and not result.email_sent
+                and result.errors
+            ):
+                from app.scheduling.heidi_escalation import escalate_to_heidi
+
+                esc = escalate_to_heidi(
+                    proposal_id,
+                    failure_error="; ".join(result.errors),
+                    reason="Offer email send failed after Kory approval.",
+                )
+                result.warnings = (result.warnings or []) + [
+                    esc.get("kory_message", "Escalated to Heidi after send failure."),
+                ]
             if result.ok or normalized_decision == "rejected":
                 from app.storage.learning_log import record_approval_outcome
 
@@ -319,6 +597,64 @@ def execute_lexi_approval(
             return result
 
 
+def _place_holds_after_offer(
+    conn: sqlite3.Connection,
+    *,
+    proposal_id: int,
+    proposal: dict[str, Any],
+    result: ExecutionResult,
+) -> tuple[int, str | None]:
+    """Place calendar holds after the offer email is sent (per scheduling rules)."""
+    from app.integrations.hold_placement import HoldPlacementError, place_offered_holds
+    from app.scheduling.calendar_intelligence import resolve_write_calendar_name
+
+    slots = proposal.get("proposed_slots") or []
+    if not slots:
+        return 0, None
+    existing = _fetch_holds(conn, proposal_id)
+    if existing:
+        return len(existing), None
+    try:
+        count = place_offered_holds(
+            conn,
+            proposal_id=proposal_id,
+            slots=slots,
+            intent_classification=proposal.get("intent_classification"),
+            meeting_subject=proposal.get("subject"),
+            calendar_name=resolve_write_calendar_name(
+                intent=proposal.get("intent_classification")
+            ),
+            sender=proposal.get("sender"),
+            body=str(proposal.get("raw_body") or ""),
+        )
+        _insert_audit_log(
+            conn,
+            step_name="hold_placement",
+            reference_id=str(proposal_id),
+            log_level="INFO",
+            message=f"Placed {count} hold(s) after offer email sent.",
+            payload={"proposal_id": proposal_id, "hold_count": count},
+        )
+        return count, None
+    except HoldPlacementError as exc:
+        return 0, str(exc)
+
+
+def _parse_recipient_selected_slot(proposal: dict[str, Any]) -> dict[str, str] | None:
+    raw = proposal.get("recipient_selected_slot")
+    if not raw:
+        return None
+    if isinstance(raw, dict) and raw.get("start"):
+        return {"start": str(raw["start"]), "end": str(raw.get("end") or "")}
+    try:
+        parsed = json.loads(str(raw))
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if isinstance(parsed, dict) and parsed.get("start"):
+        return {"start": str(parsed["start"]), "end": str(parsed.get("end") or "")}
+    return None
+
+
 def _fetch_holds(conn: sqlite3.Connection, proposal_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
@@ -345,12 +681,16 @@ def _fetch_proposal_bundle(conn: sqlite3.Connection, proposal_id: int) -> dict[s
             p.drafted_reply,
             p.confidence_score,
             p.justification,
-            p.voice_mode,
-            p.send_channel,
-            p.is_delegation,
-            e.subject,
+                p.voice_mode,
+                p.send_channel,
+                p.is_delegation,
+                p.recipient_selected_slot,
+                p.reply_message_id,
+                p.scheduling_note,
+                e.subject,
             e.sender,
-            e.raw_body
+            e.raw_body,
+            e.conversation_id
         FROM proposals AS p
         INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
         WHERE p.id = ?
@@ -461,16 +801,39 @@ def _confirm_selected_hold(
     selected_slot: dict[str, str],
     result: ExecutionResult,
 ) -> tuple[str | None, list[str]]:
+    from app.scheduling.invite_builder import build_invite_action
+    from app.scheduling.timezone_intel import lookup_recipient_timezone
+    from app.config import settings
+    from zoneinfo import ZoneInfo
+
     errors: list[str] = []
     matched_hold = _match_hold_for_slot(proposal.get("holds") or [], selected_slot)
     attendee = _extract_email(proposal.get("sender"))
+    tz_result = lookup_recipient_timezone(
+        sender_email=attendee,
+        body=str(proposal.get("raw_body") or ""),
+        stored_timezone=str(proposal.get("recipient_timezone") or "") or None,
+        for_scheduling=True,
+    )
+    format_tz = (
+        tz_result.timezone
+        if tz_result.timezone and tz_result.confidence != "unknown"
+        else ZoneInfo(settings.scheduling_timezone)
+    )
+    invite_action = build_invite_action(
+        slot=selected_slot,
+        meeting_subject=proposal.get("subject"),
+        intent=proposal.get("intent_classification"),
+        attendee_email=attendee,
+        sender_display=proposal.get("sender"),
+        body=str(proposal.get("raw_body") or ""),
+        recipient_timezone=format_tz,
+    )
 
     if matched_hold:
         event_id = _confirm_hold_event(
             hold=matched_hold,
-            subject=proposal.get("subject"),
-            sender_display=proposal.get("sender"),
-            attendee_email=attendee,
+            invite_action=invite_action,
             result=result,
         )
         if event_id and _is_mock_event_id(str(matched_hold.get("event_id", ""))):
@@ -480,15 +843,8 @@ def _confirm_selected_hold(
             )
         return event_id, errors
 
-    action = {
-        "start": selected_slot["start"],
-        "end": selected_slot["end"],
-        "title": _confirmed_event_title(proposal.get("subject"), proposal.get("sender")),
-        "location": "Teams",
-        "attendees": [attendee] if attendee else [],
-    }
     try:
-        event_id, _log_id = create_calendar_event(action)
+        event_id, _log_id = create_calendar_event(invite_action)
         if not event_id:
             errors.append("Composio did not return a confirmed calendar event id.")
             result.warnings = (result.warnings or []) + [
@@ -502,7 +858,7 @@ def _confirm_selected_hold(
             step_name="execution_dispatch",
             reference_id=str(proposal_id),
             log_level="WARNING",
-            message="Calendar confirmation failed; continuing with email dispatch.",
+            message="Calendar invite failed.",
             payload={"proposal_id": proposal_id, "error": str(exc)},
         )
         return None, errors
@@ -511,25 +867,14 @@ def _confirm_selected_hold(
 def _confirm_hold_event(
     *,
     hold: dict[str, Any],
-    subject: str | None,
-    sender_display: str | None,
-    attendee_email: str | None,
+    invite_action: dict[str, Any],
     result: ExecutionResult,
 ) -> str | None:
     event_id = str(hold.get("event_id") or "")
-    slot_start = str(hold.get("slot_start") or "")
-    slot_end = str(hold.get("slot_end") or "")
 
     if _is_mock_event_id(event_id):
-        action = {
-            "start": slot_start,
-            "end": slot_end,
-            "title": _confirmed_event_title(subject, sender_display),
-            "location": "Teams",
-            "attendees": [attendee_email] if attendee_email else [],
-        }
         try:
-            confirmed_id, _ = create_calendar_event(action)
+            confirmed_id, _ = create_calendar_event(invite_action)
             return confirmed_id
         except Exception as exc:
             result.warnings = (result.warnings or []) + [
@@ -544,15 +889,8 @@ def _confirm_hold_event(
             f"Could not delete tentative hold {event_id}: {exc}"
         ]
 
-    action = {
-        "start": slot_start,
-        "end": slot_end,
-        "title": _confirmed_event_title(subject, sender_display),
-        "location": "Teams",
-        "attendees": [attendee_email] if attendee_email else [],
-    }
     try:
-        confirmed_id, _ = create_calendar_event(action)
+        confirmed_id, _ = create_calendar_event(invite_action)
         return confirmed_id or event_id
     except Exception as exc:
         result.warnings = (result.warnings or []) + [
@@ -731,6 +1069,8 @@ def _send_drafted_reply(
         send_channel = str(proposal.get("send_channel") or "kory").strip().lower()
         if send_channel not in {"kory", "lexi"}:
             send_channel = "kory"
+        reply_target = str(proposal.get("reply_message_id") or "").strip() or thread_id
+
         if settings.sandbox_email_loopback and settings.lexi_write_mode == "sandbox":
             message_id, _log = send_pilot_reply_for_proposal(
                 original_subject=proposal.get("subject"),
@@ -740,28 +1080,21 @@ def _send_drafted_reply(
             )
             return bool(message_id), None
 
-        if intended and not settings.sandbox_email_loopback:
-            message_id, _log = send_pilot_reply_for_proposal(
-                original_subject=proposal.get("subject"),
-                body=body,
-                intended_recipient=intended,
-                send_channel=send_channel,  # type: ignore[arg-type]
-            )
-            return bool(message_id), None
-
         if send_channel == "lexi":
-            message_id, _log = send_pilot_reply_for_proposal(
-                original_subject=proposal.get("subject"),
-                body=body,
-                intended_recipient=intended,
+            message_id, _log = send_reply_in_thread(
+                reply_target,
+                body,
                 send_channel="lexi",
+                approved_send=True,
+                conversation_id=str(proposal.get("conversation_id") or "").strip() or None,
+                intended_recipient=intended,
             )
             return bool(message_id), None
 
-        draft_id, _draft_log = create_draft_reply(thread_id, body)
+        draft_id, _draft_log = create_draft_reply(thread_id, body, send_channel="kory")
         if not draft_id:
             return False, "Composio created no draft message id for reply."
-        send_draft(draft_id)
+        send_draft(draft_id, send_channel="kory")
         return True, None
     except Exception as exc:
         return False, f"Email dispatch failed: {type(exc).__name__}: {exc}"

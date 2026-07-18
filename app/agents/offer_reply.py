@@ -1,0 +1,201 @@
+"""Handle recipient replies after Kory sent a time offer."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from typing import Any
+
+from app.agents.comms_agent import (
+    STATUS_OFFER_SENT,
+    mark_recipient_reoffer_request,
+    mark_recipient_slot_choice,
+)
+from app.config import settings
+from app.scheduling.recipient_slot import match_recipient_slot_choice, recipient_times_rejected
+from app.storage.lexi_db import get_lexi_connection
+
+logger = logging.getLogger(__name__)
+
+
+def try_handle_recipient_slot_reply(raw_email: dict[str, Any]) -> dict[str, Any] | None:
+    """Route offer_sent thread replies: slot pick, re-offer request, or unparsed."""
+    conversation_id = str(raw_email.get("conversation_id") or "").strip()
+    message_id = str(raw_email.get("message_id") or raw_email.get("thread_id") or "").strip()
+    sender = str(raw_email.get("sender") or "").strip().lower()
+    subject = str(raw_email.get("subject") or "").strip()
+    body = str(raw_email.get("raw_body") or raw_email.get("body") or "")
+
+    if not body.strip():
+        return None
+
+    proposal = _find_offer_sent_proposal(conversation_id, subject=subject)
+    if not proposal:
+        return None
+
+    original_sender = str(proposal.get("sender") or "").strip().lower()
+    if original_sender and sender and not _same_person(sender, original_sender):
+        return None
+
+    if _is_kory_sender(sender):
+        return None
+
+    slots = _parse_slots(proposal.get("proposed_slots"))
+    if not slots:
+        return None
+
+    if recipient_times_rejected(body):
+        result = mark_recipient_reoffer_request(
+            int(proposal["proposal_id"]),
+            reply_body=body,
+        )
+        if result.get("ok") and settings.lexi_teams_enabled:
+            from app.bot.teams_publisher import schedule_teams_reoffer_prompt_push
+
+            schedule_teams_reoffer_prompt_push(int(proposal["proposal_id"]), reply_body=body)
+        return {
+            "ok": result.get("ok", False),
+            "action": "recipient_reoffer_request",
+            "proposal_id": proposal.get("proposal_id"),
+            "status": result.get("status"),
+            "message": "Recipient said offered times do not work — notified Kory.",
+        }
+
+    chosen = match_recipient_slot_choice(body, slots, sender_email=sender)
+    if not chosen:
+        logger.info(
+            "Reply on offer_sent proposal %s but no slot match yet.",
+            proposal.get("proposal_id"),
+        )
+        return {
+            "skipped": False,
+            "action": "offer_reply_unparsed",
+            "proposal_id": proposal.get("proposal_id"),
+            "thread_id": message_id,
+            "reason": "Could not parse recipient reply — left for Kory review.",
+        }
+
+    result = mark_recipient_slot_choice(
+        int(proposal["proposal_id"]),
+        chosen,
+        reply_body=body,
+    )
+    if not result.get("ok"):
+        return result
+
+    if settings.lexi_teams_enabled:
+        from app.bot.teams_publisher import schedule_teams_invite_prompt_push
+
+        schedule_teams_invite_prompt_push(int(proposal["proposal_id"]))
+
+    return {
+        "ok": True,
+        "action": "recipient_slot_selected",
+        "proposal_id": proposal["proposal_id"],
+        "selected_slot": chosen,
+        "status": result.get("status"),
+    }
+
+
+def _find_offer_sent_proposal(
+    conversation_id: str,
+    *,
+    subject: str = "",
+) -> dict[str, Any] | None:
+    with get_lexi_connection() as conn:
+        if conversation_id:
+            row = conn.execute(
+                """
+                SELECT
+                    p.id AS proposal_id,
+                    p.proposed_slots,
+                    p.intent_classification,
+                    e.sender,
+                    e.subject
+                FROM proposals AS p
+                INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+                WHERE p.status = ?
+                  AND e.conversation_id = ?
+                ORDER BY p.id DESC
+                LIMIT 1
+                """,
+                (STATUS_OFFER_SENT, conversation_id),
+            ).fetchone()
+            if row:
+                return dict(row)
+
+        norm = _normalize_thread_subject(subject)
+        if not norm:
+            return None
+        rows = conn.execute(
+            """
+            SELECT
+                p.id AS proposal_id,
+                p.proposed_slots,
+                p.intent_classification,
+                e.sender,
+                e.subject
+            FROM proposals AS p
+            INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+            WHERE p.status = ?
+            ORDER BY p.id DESC
+            LIMIT 30
+            """,
+            (STATUS_OFFER_SENT,),
+        ).fetchall()
+        for row in rows:
+            if _normalize_thread_subject(str(row["subject"] or "")) == norm:
+                return dict(row)
+    return None
+
+
+def _normalize_thread_subject(subject: str) -> str:
+    s = (subject or "").strip().lower()
+    while True:
+        if s.startswith("re:"):
+            s = s[3:].strip()
+        elif s.startswith("fwd:"):
+            s = s[4:].strip()
+        else:
+            break
+    return s
+
+
+def _parse_slots(raw: Any) -> list[dict[str, str]]:
+    if isinstance(raw, list):
+        return [s for s in raw if isinstance(s, dict) and s.get("start")]
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(str(raw))
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if isinstance(parsed, list):
+        return [s for s in parsed if isinstance(s, dict) and s.get("start")]
+    return []
+
+
+def _same_person(a: str, b: str) -> bool:
+    email_a = _extract_email(a)
+    email_b = _extract_email(b)
+    return bool(email_a and email_b and email_a == email_b)
+
+
+def _extract_email(value: str) -> str | None:
+    match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", value)
+    return match.group(0).lower() if match else (value.lower() if "@" in value else None)
+
+
+def _is_kory_sender(sender: str) -> bool:
+    from app.config import settings
+
+    lexi = (settings.lexi_mailbox_email or "").strip().lower()
+    email = _extract_email(sender) or sender
+    kory_emails = {e.lower() for e in settings.kory_sender_emails}
+    if lexi:
+        kory_emails.add(lexi)
+    if email in kory_emails:
+        return True
+    addr = (email or "").strip().lower()
+    return any(domain in addr for domain in ("@iconicfounders.com", "@ifg.vc"))

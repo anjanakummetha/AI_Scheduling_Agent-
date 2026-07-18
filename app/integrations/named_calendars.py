@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timedelta
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 CALENDARS_CONFIG_PATH = ROOT_DIR / "config" / "calendars.yaml"
 ConnectionRole = Literal["read", "write"]
+_LIST_ALL_CALENDARS_TTL_SEC = 600.0
+_list_all_calendars_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_resolve_calendar_cache: dict[tuple[str, str], tuple[float, dict[str, Any] | None]] = {}
 
 
 def _load_calendar_config() -> dict[str, Any]:
@@ -46,8 +49,25 @@ def _execute_calendar_tool(
     return execute_write_tool(tool_slug, arguments)
 
 
+def clear_calendar_list_cache() -> None:
+    """Drop cached Outlook calendar listings (tests / forced refresh)."""
+    _list_all_calendars_cache.clear()
+    _resolve_calendar_cache.clear()
+
+
 def list_all_calendars(*, role: ConnectionRole = "read") -> list[dict[str, Any]]:
     """List primary + calendar-group calendars for read or write connection."""
+    now = time.monotonic()
+    cached = _list_all_calendars_cache.get(role)
+    if cached and now - cached[0] < _LIST_ALL_CALENDARS_TTL_SEC:
+        return cached[1]
+
+    calendars = _fetch_all_calendars(role=role)
+    _list_all_calendars_cache[role] = (now, calendars)
+    return calendars
+
+
+def _fetch_all_calendars(*, role: ConnectionRole) -> list[dict[str, Any]]:
     calendars: dict[str, dict[str, Any]] = {}
 
     def _add(item: dict[str, Any], *, source: str) -> None:
@@ -129,6 +149,12 @@ def resolve_calendar_name(
     if not calendar_name.strip():
         return None
 
+    cache_key = (role, calendar_name.strip().lower())
+    now = time.monotonic()
+    cached = _resolve_calendar_cache.get(cache_key)
+    if cached and now - cached[0] < _LIST_ALL_CALENDARS_TTL_SEC:
+        return cached[1]
+
     config = _load_calendar_config()
     aliases = config.get("aliases") or {}
     key = calendar_name.strip().lower().replace(" ", "_")
@@ -138,7 +164,9 @@ def resolve_calendar_name(
     for cal in list_all_calendars(role=role):
         cal_norm = _normalize_name(cal["name"])
         if _names_match(target_norm, cal_norm):
+            _resolve_calendar_cache[cache_key] = (now, cal)
             return cal
+    _resolve_calendar_cache[cache_key] = (now, None)
     return None
 
 
@@ -190,12 +218,23 @@ def get_calendar_events_by_name(
     end_iso: str,
     *,
     role: ConnectionRole = "read",
+    resolved: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Fetch events from a named calendar."""
-    resolved = resolve_calendar_name(calendar_name, role=role)
-    if not resolved:
+    cal = resolved or resolve_calendar_name(calendar_name, role=role)
+    if not cal:
         return [], None
+    return get_calendar_events_for_resolved(cal, start_iso, end_iso, role=role)
 
+
+def get_calendar_events_for_resolved(
+    resolved: dict[str, Any],
+    start_iso: str,
+    end_iso: str,
+    *,
+    role: ConnectionRole = "read",
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch events when the calendar record is already resolved."""
     start = _convert_iso_timezone(start_iso, SCHEDULING_TIMEZONE, OUTLOOK_TIMEZONE)
     end = _convert_iso_timezone(end_iso, SCHEDULING_TIMEZONE, OUTLOOK_TIMEZONE)
 
@@ -260,17 +299,20 @@ def fetch_events_chunked(
     if end_dt.tzinfo:
         end_dt = end_dt.replace(tzinfo=None)
 
+    resolved_cals: list[dict[str, Any]] = []
+    for name in conflict_calendar_names():
+        resolved = resolve_calendar_name(name, role="read")
+        if resolved:
+            resolved_cals.append(resolved)
+
     merged: dict[str, dict[str, Any]] = {}
     chunks = 0
     cursor = start_dt
     while cursor < end_dt:
         chunk_end = min(cursor + timedelta(days=chunk_days), end_dt)
-        for name in conflict_calendar_names():
-            resolved = resolve_calendar_name(name, role="read")
-            if not resolved:
-                continue
-            events, _ = get_calendar_events_by_name(
-                name,
+        for resolved in resolved_cals:
+            events, _ = get_calendar_events_for_resolved(
+                resolved,
                 cursor.isoformat(),
                 chunk_end.isoformat(),
                 role="read",
@@ -278,6 +320,7 @@ def fetch_events_chunked(
             for event in events:
                 if not is_blocking_event(event):
                     continue
+                name = str(resolved.get("name") or "")
                 event_id = str(event.get("id") or f"{name}-{event.get('subject')}-{chunks}")
                 event["calendar_name"] = resolved["name"]
                 merged[event_id] = event
@@ -395,21 +438,26 @@ def create_event_on_calendar(
         for email in calendar_action.get("attendees", [])
     ]
 
+    location = calendar_action.get("location", "Microsoft Teams")
+    is_online = calendar_action.get("is_online_meeting")
+    if is_online is None:
+        is_online = str(location).lower() in {"teams", "microsoft teams", "zoom"}
     payload: dict[str, Any] = {
         "user_id": "me",
         "calendar_id": resolved["id"],
         "subject": calendar_action.get("title", "Meeting with Kory"),
         "start": {"dateTime": start, "timeZone": OUTLOOK_TIMEZONE},
         "end": {"dateTime": end, "timeZone": OUTLOOK_TIMEZONE},
-        "location": {"displayName": calendar_action.get("location", "Teams")},
+        "location": {"displayName": location},
         "attendees": attendees,
         "body": {
             "contentType": "text",
             "content": calendar_action.get("body") or "Created by Lexi.",
         },
-        "isOnlineMeeting": str(calendar_action.get("location", "Teams")).lower() == "teams",
-        "onlineMeetingProvider": "teamsForBusiness",
+        "isOnlineMeeting": bool(is_online),
     }
+    if is_online:
+        payload["onlineMeetingProvider"] = "teamsForBusiness"
 
     if settings.lexi_dry_run:
         return create_calendar_event(calendar_action)

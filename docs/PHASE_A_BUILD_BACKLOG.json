@@ -1,0 +1,231 @@
+{
+  "phase": "A",
+  "title": "Build prep & read-only validation",
+  "completed_at": "2026-07-16",
+  "constraints_honored": [
+    "No Outlook writes (no send/create/update/delete)",
+    "No HubSpot writes (no merge/update/create)",
+    "No Asana writes (no task create/update)"
+  ],
+  "code_fix_applied": [
+    {
+      "file": "app/orchestrator.py",
+      "issue": "NameError on already-ingested path: subject/body_preview/sender used before assignment",
+      "fix": "Extract sender/subject/body_preview before _thread_already_ingested check",
+      "impact": "Delegation replay on duplicate webhook delivery no longer crashes"
+    }
+  ],
+  "ingress_audit": {
+    "notify_mode_live": "delegation_only",
+    "notify_mode_example": "delegation_and_followups",
+    "implication": "Cold inbound scheduling requests NEVER get Teams cards; only Lexi CC / delegation phrases / Kory phrase",
+    "delegation_auto_draft": true,
+    "delegation_cc_only": true,
+    "worker_running_at_audit": false,
+    "ingress_mode": "webhook_primary_backup_poll",
+    "poll_outlook": false,
+    "backup_poll_minutes": 30,
+    "webhook_public_url_set": false,
+    "dry_run_live": false,
+    "write_mode_live": "kory",
+    "risk": "Live .env allows real Outlook writes after Teams approval; dry_run is false",
+    "proposal_db_snapshot": {
+      "no_reply_needed": 9,
+      "awaiting_reply_prompt": 1,
+      "offer_sent": 1,
+      "pending_approval": 1,
+      "note": "Most recent meeting_request rows auto-skipped (no Teams notify) because not marked delegation"
+    },
+    "skip_paths": [
+      "already_ingested (with delegation replay — fixed NameError)",
+      "active_proposal_duplicate",
+      "local_test_only (subject must contain TEST)",
+      "lexi_thread_followup handler",
+      "delegation_followup early",
+      "conversation_already_tracked (can suppress non-delegation follow-ups on same conversation)",
+      "duplicate_newsletter",
+      "non_scheduling / no_action",
+      "auto_skip via evaluate_inbound_notification when not delegation"
+    ],
+    "flaky_card_root_causes": [
+      "LEXI_TEAMS_INBOUND_NOTIFY_MODE=delegation_only auto-skips non-delegation meeting_request",
+      "conversation_already_tracked returns early before Teams push for later messages",
+      "worker_running=false means webhook worker not attached in this process; depends on Hermes/webhook host",
+      "webhook_public_url unset in status snapshot"
+    ]
+  },
+  "feature_gap_matrix": {
+    "pre_meeting_brief": {
+      "status": "partial",
+      "exists": "lexi_research_person (web+news+inbox search, read-only)",
+      "missing": [
+        "auto pre-brief N minutes before meeting",
+        "Teams push of brief",
+        "who introduced / referral attribution",
+        "structured brief template (company, prior threads, ask, intro path)"
+      ]
+    },
+    "who_introduced": {
+      "status": "missing",
+      "spec": "Parse intro email CC/From chain and HubSpot association; store introducer_name/email on proposal or recipient_profiles; surface in prebrief + daily briefing"
+    },
+    "morning_shortcuts": {
+      "status": "partial",
+      "exists": ["pending", "inbound", "inbox review", "help", "natural language via Hermes"],
+      "missing_commands": ["today", "unanswered", "brief", "calendar", "prebrief"],
+      "spec": "Add Teams shortcuts: unanswered email briefing, today's calendar, next-meeting prebriefs"
+    },
+    "asana_full_chat": {
+      "status": "partial",
+      "exists": "Reservation Reminders only (lexi_create_reservation_reminder + post-send dispatch)",
+      "missing": [
+        "list/search tasks across NON-IFG and other projects",
+        "create/update/complete via Teams chat (approval-gated)",
+        "MCP tools beyond booking reminder"
+      ],
+      "phase_b_note": "Reads first; writes only after Kory Teams approval"
+    },
+    "hubspot": {
+      "status": "not_wired",
+      "connection_id_known": "ca_jdY18Wb0L46M",
+      "env_HUBSPOT_COMPOSIO_CONNECTION_ID": false,
+      "mcp_hubspot_tools": 0,
+      "missing": [
+        "set HUBSPOT_COMPOSIO_CONNECTION_ID",
+        "read contacts/deals (CRM Sync from LinkedIn SN)",
+        "cleanup inactive contacts (approval-gated batch)",
+        "outreach batch draft (approval-gated, no auto-send)"
+      ]
+    },
+    "hold_reminder_3d": {
+      "status": "exists",
+      "path": "app/scheduling/hold_reminder.py + hold_lifecycle job + Teams approval before send"
+    },
+    "meeting_24h_reminder": {
+      "status": "missing",
+      "spec": "Cron/job: 24h before confirmed invite, Teams brief + optional prospect reminder draft (approval-gated)"
+    },
+    "email_to_lexi": {
+      "status": "partial",
+      "exists": "lexi@ mailbox + delegation CC + thread followup",
+      "missing": "Explicit 'email Lexi to do X' command parser for non-scheduling tasks (Asana/HubSpot/brief)"
+    },
+    "daily_ceo_briefing_445_mt": {
+      "status": "missing",
+      "spec": "Scheduled 4:45 AM America/Denver Teams message: calendar today, pending approvals, unanswered priority mail, next prebriefs, Asana due, HubSpot follow-ups"
+    },
+    "bcc_scheduling": {
+      "status": "deferred"
+    },
+    "ceo_dashboard_sync": {
+      "status": "deferred_after_lexi_features"
+    }
+  },
+  "ordered_build_backlog": [
+    {
+      "id": "B1",
+      "priority": 1,
+      "item": "Ingress reliability: keep NameError fix; add regression test; document notify_mode tradeoff; ensure webhook worker + public URL for Kory UAT",
+      "touches": ["app/orchestrator.py", "tests", "ops config"],
+      "writes_external": false
+    },
+    {
+      "id": "B2",
+      "priority": 2,
+      "item": "Teams morning shortcuts: today / unanswered / prebrief (read-only Outlook + local DB)",
+      "touches": ["app/teams/commands.py", "app/bot/teams_text.py", "hermes_mcp_server.py"],
+      "writes_external": false
+    },
+    {
+      "id": "B3",
+      "priority": 3,
+      "item": "Pre-meeting brief + who-introduced attribution",
+      "touches": ["person_research", "recipient_profiles", "Teams push job"],
+      "writes_external": "Outlook read only; optional HubSpot read later"
+    },
+    {
+      "id": "B4",
+      "priority": 4,
+      "item": "24h meeting reminder job + daily 4:45 MT CEO briefing",
+      "touches": ["app/jobs/*", "teams_publisher"],
+      "writes_external": "Teams only; email drafts approval-gated"
+    },
+    {
+      "id": "B5",
+      "priority": 5,
+      "item": "Asana chat: list/search + approval-gated create/complete beyond reservation board",
+      "touches": ["asana_manager", "MCP tools"],
+      "writes_external": "Asana only after approval"
+    },
+    {
+      "id": "B6",
+      "priority": 6,
+      "item": "HubSpot: wire connection ID, read tools, cleanup + outreach drafts approval-gated",
+      "touches": [".env", "new hubspot module", "MCP"],
+      "writes_external": "HubSpot only after approval"
+    },
+    {
+      "id": "B7",
+      "priority": 7,
+      "item": "Email-to-Lexi task routing for non-scheduling asks",
+      "touches": ["orchestrator", "triage"],
+      "writes_external": false_until_approved
+    }
+  ],
+  "acceptance_tests_for_phase_b": [
+    "Kory CCs lexi@ + scheduling ask → Teams approval card within webhook latency",
+    "Cold inbound with notify_mode=delegation_only → no Teams card (expected) OR mode flipped for UAT",
+    "Duplicate webhook → no NameError; delegation replay works",
+    "today / unanswered / prebrief Teams commands return text without writing calendars",
+    "Daily briefing fires at 4:45 MT in dry Teams mode",
+    "Asana/HubSpot write paths blocked without approval and blocked in Phase A dry validation"
+  ],
+  "tests_run": {
+    "unit_pytest": {
+      "passed": 75,
+      "failed": 2,
+      "suites": [
+        "test_kory_cc_heidi_forward",
+        "test_lexi_followup_inbox",
+        "test_pre_approval_gate",
+        "test_slot_engine",
+        "test_slot_validation",
+        "test_schedule_from_context",
+        "test_offer_refresh",
+        "test_timezone_intel",
+        "test_validators",
+        "test_hermes_scheduling_paths",
+        "test_hold_reminder",
+        "test_meeting_type"
+      ],
+      "known_failures": [
+        {
+          "test": "test_timezone_intel.py::test_external_unknown_asks_in_draft",
+          "reason": "Draft copy says 'mountain time only' / 'timezone unknown' but assertion still looks for 'not certain'/'not sure'"
+        },
+        {
+          "test": "test_hold_reminder.py::test_process_due_hold_reminders_stages_draft",
+          "reason": "sqlite3.OperationalError: no such table: proposals (test DB fixture isolation)"
+        }
+      ]
+    },
+    "ingress_related": {
+      "passed": 12,
+      "failed": 1,
+      "known_failure": "test_teams_push_dedup.py::test_schedule_teams_approval_push_dedupes_concurrent_calls (inflight set assertion)"
+    },
+    "synthetic_no_api": [
+      "Delegation matrix (5 cases) vs evaluate_inbound_notification under delegation_only",
+      "Already-ingested path regression (no NameError)",
+      "Config/DB status snapshot",
+      "Teams command parse matrix",
+      "MCP tool inventory",
+      "Introducer/prebrief code scan (0 hits)"
+    ],
+    "external_api_calls": {
+      "outlook": 0,
+      "hubspot": 0,
+      "asana": 0
+    }
+  }
+}

@@ -87,12 +87,7 @@
     {
       "name": "Bot Framework token",
       "ok": true,
-      "detail": "token_len=1627"
-    },
-    {
-      "name": "Live ping to Teams DM",
-      "ok": true,
-      "detail": "message sent to registered conversation"
+      "detail": "token_len=1630"
     }
   ],
   "phase_b_chat_ready": true,

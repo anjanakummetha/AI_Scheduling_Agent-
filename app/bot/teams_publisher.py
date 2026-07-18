@@ -18,8 +18,11 @@ from app.bot.teams_conversation_store import load_conversation_reference, teams_
 from app.agents.inbound_reply import get_inbound_reply_queue
 from app.bot.teams_text import format_approval_notification, format_reply_prompt_notification
 from app.config import settings
+from app.safety.outbound_guard import teams_push_allowed
 from app.storage.lexi_db import get_lexi_connection
 from app.utils.teams_cards import generate_approval_card, generate_reply_prompt_card
+
+import rules as kory_rules
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,49 @@ def _tenant_teams_service_url() -> str:
 PENDING_APPROVAL = "pending_approval"
 _TEAMS_PUSH_COOLDOWN_SECONDS = 300
 _recent_teams_pushes: dict[int, float] = {}
+_inflight_scheduled_pushes: set[int] = set()
+_push_lock: asyncio.Lock | None = None
+
+
+def _get_push_lock() -> asyncio.Lock:
+    global _push_lock
+    if _push_lock is None:
+        _push_lock = asyncio.Lock()
+    return _push_lock
+
+
+def _teams_approval_already_notified(proposal_id: int) -> bool:
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            "SELECT teams_approval_notified_at FROM proposals WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+    return bool(row and row["teams_approval_notified_at"])
+
+
+def _claim_teams_approval_notification(proposal_id: int) -> bool:
+    """Reserve this proposal's approval notification slot (cleared if send fails)."""
+    with get_lexi_connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE proposals
+            SET teams_approval_notified_at = datetime('now')
+            WHERE id = ?
+              AND teams_approval_notified_at IS NULL
+            """,
+            (proposal_id,),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+
+
+def _clear_teams_approval_notification(proposal_id: int) -> None:
+    with get_lexi_connection() as conn:
+        conn.execute(
+            "UPDATE proposals SET teams_approval_notified_at = NULL WHERE id = ?",
+            (proposal_id,),
+        )
+        conn.commit()
 
 
 def _teams_push_on_cooldown(proposal_id: int) -> bool:
@@ -123,6 +169,7 @@ def load_proposal_approval_payload(
                 p.confidence_score,
                 p.justification,
                 p.voice_mode,
+                COALESCE(p.recipient_timezone, e.recipient_timezone) AS recipient_timezone,
                 e.subject,
                 e.sender,
                 e.raw_body
@@ -155,6 +202,7 @@ def load_proposal_approval_payload(
             "confidence_score": row["confidence_score"],
             "voice_mode": row["voice_mode"],
             "proposed_slots": _parse_json_list(row["proposed_slots"]),
+            "recipient_timezone": row["recipient_timezone"] if "recipient_timezone" in row.keys() else None,
         }
         email_record = {
             "subject": row["subject"],
@@ -162,6 +210,26 @@ def load_proposal_approval_payload(
             "raw_body": row["raw_body"],
         }
         card_json = generate_approval_card(proposal_record, email_record, holds)
+        if card_json is None:
+            logger.warning(
+                "Skipping Teams approval card for proposal %s — scheduling offer not ready.",
+                proposal_id,
+            )
+            return None
+        # Card build may refresh slots/draft in DB — reload for callers.
+        refreshed = conn.execute(
+            """
+            SELECT proposed_slots, drafted_reply
+            FROM proposals WHERE id = ?
+            """,
+            (proposal_id,),
+        ).fetchone()
+        if refreshed:
+            proposal_record = {
+                **proposal_record,
+                "proposed_slots": _parse_json_list(refreshed["proposed_slots"]),
+                "drafted_reply": refreshed["drafted_reply"],
+            }
         return proposal_record, card_json
 
 
@@ -248,71 +316,104 @@ async def push_approval_card_to_teams(
         return False
 
 
-async def push_approval_card_for_proposal_id(proposal_id: int) -> None:
-    """Load a pending proposal and notify Teams (text and/or Adaptive Card)."""
-    if _teams_push_on_cooldown(proposal_id):
+async def push_approval_card_for_proposal_id(proposal_id: int, *, force: bool = False) -> None:
+    """Load a pending proposal and notify Teams (Adaptive Card; text-only if configured)."""
+    if force:
+        _clear_teams_approval_notification(proposal_id)
+        _inflight_scheduled_pushes.discard(proposal_id)
+
+    if not force and _teams_push_on_cooldown(proposal_id):
         logger.info(
             "Skipping duplicate Teams approval push for proposal %s (cooldown).",
             proposal_id,
         )
         return
 
-    queue = get_lexi_pending_queue()
-    item = next((entry for entry in queue if entry.proposal_id == proposal_id), None)
-    if item is not None:
-        await push_approval_text_to_teams(
-            format_approval_notification(item),
-            proposal_id=proposal_id,
-        )
-        if settings.lexi_teams_text_only:
-            _mark_teams_push_sent(proposal_id)
+    lock = _get_push_lock()
+    async with lock:
+        if not force and _teams_approval_already_notified(proposal_id):
+            logger.info(
+                "Skipping duplicate Teams approval push for proposal %s (already notified).",
+                proposal_id,
+            )
             return
-        await push_approval_card_to_teams(
-            {
-                "id": item.proposal_id,
-                "thread_id": item.thread_id,
-                "drafted_reply": item.drafted_reply,
-                "voice_mode": item.voice_mode,
-                "proposed_slots": item.proposed_slots,
-            },
-            item.approval_card,
-        )
-        _mark_teams_push_sent(proposal_id)
-        return
+        if not _claim_teams_approval_notification(proposal_id):
+            logger.info(
+                "Skipping duplicate Teams approval push for proposal %s (claim lost).",
+                proposal_id,
+            )
+            return
 
-    payload = load_proposal_approval_payload(proposal_id)
-    if payload is None:
-        logger.info(
-            "No pending_approval payload available for Teams push (proposal_id=%s).",
-            proposal_id,
-        )
-        return
+        try:
+            payload = load_proposal_approval_payload(proposal_id)
+            if payload is None:
+                _clear_teams_approval_notification(proposal_id)
+                logger.warning(
+                    "No approval card for proposal %s — sending guidance ping.",
+                    proposal_id,
+                )
+                from app.bot.teams_publisher import schedule_teams_scheduling_guidance_push
 
-    proposal_record, card_json = payload
-    await push_approval_card_to_teams(proposal_record, card_json)
-    _mark_teams_push_sent(proposal_id)
+                schedule_teams_scheduling_guidance_push(
+                    proposal_id,
+                    summary=(
+                        "Draft is ready but the approval card could not be built — "
+                        "open Teams chat and ask me to show the draft, or retry scheduling."
+                    ),
+                    force=True,
+                )
+                return
+
+            proposal_record, card_json = payload
+            if settings.lexi_teams_text_only:
+                await push_approval_text_to_teams(
+                    format_approval_notification_from_records(proposal_record, card_json),
+                    proposal_id=proposal_id,
+                )
+            else:
+                ok = await push_approval_card_to_teams(proposal_record, card_json)
+                if not ok:
+                    _clear_teams_approval_notification(proposal_id)
+                    return
+            _mark_teams_push_sent(proposal_id)
+        except Exception:
+            _clear_teams_approval_notification(proposal_id)
+            raise
+
+
+def format_approval_notification_from_records(
+    proposal_record: dict[str, Any],
+    card_json: dict[str, Any],
+) -> str:
+    """Build text fallback when only text mode is enabled."""
+    from app.bot.teams_text import format_approval_notification
+
+    queue = get_lexi_pending_queue()
+    item = next(
+        (entry for entry in queue if entry.proposal_id == proposal_record.get("id")),
+        None,
+    )
+    if item is not None:
+        return format_approval_notification(item)
+    subject = ""
+    for block in card_json.get("body") or []:
+        if block.get("type") == "TextBlock" and block.get("weight") == "Bolder":
+            subject = str(block.get("text") or "")
+            break
+    return f"**Lexi approval required — proposal {proposal_record.get('id')}**\n{subject}"
 
 
 async def push_all_pending_cards_to_teams() -> int:
-    """Notify Teams for every pending_approval proposal (text and/or cards)."""
+    """Notify Teams for every pending_approval proposal (one card each)."""
     queue = get_lexi_pending_queue()
     if not queue:
         return 0
 
     pushed = 0
     for item in queue:
-        await push_approval_text_to_teams(
-            format_approval_notification(item),
-            proposal_id=item.proposal_id,
-        )
-        if not settings.lexi_teams_text_only:
-            await push_approval_card_to_teams(
-                {
-                    "id": item.proposal_id,
-                    "thread_id": item.thread_id,
-                },
-                item.approval_card,
-            )
+        if _teams_approval_already_notified(item.proposal_id):
+            continue
+        await push_approval_card_for_proposal_id(item.proposal_id)
         pushed += 1
     return pushed
 
@@ -382,8 +483,6 @@ async def push_reply_prompt_for_proposal_id(proposal_id: int) -> None:
         "raw_body": item.get("raw_body"),
     }
     prompt_text = format_reply_prompt_notification(item)
-    await push_approval_text_to_teams(prompt_text, proposal_id=proposal_id)
-
     card_json = generate_reply_prompt_card(proposal_record, email_record)
 
     conversation_id = ref["conversation_id"]
@@ -404,10 +503,25 @@ async def push_reply_prompt_for_proposal_id(proposal_id: int) -> None:
             proposal_id,
             exc,
         )
+        await push_approval_text_to_teams(prompt_text, proposal_id=proposal_id)
+
+
+def _log_teams_push_suppressed(proposal_id: int, kind: str) -> None:
+    logger.info(
+        "Teams %s push suppressed for proposal %s (mode=%s dry_run=%s teams=%s)",
+        kind,
+        proposal_id,
+        "staging",
+        settings.lexi_dry_run,
+        settings.lexi_teams_enabled,
+    )
 
 
 def schedule_teams_reply_prompt_push(proposal_id: int) -> None:
     """Fire-and-forget Teams notification: should I draft a reply?"""
+    if not teams_push_allowed():
+        _log_teams_push_suppressed(proposal_id, "reply_prompt")
+        return
     try:
         coro = push_reply_prompt_for_proposal_id(proposal_id)
         try:
@@ -424,20 +538,279 @@ def schedule_teams_reply_prompt_push(proposal_id: int) -> None:
         )
 
 
-def schedule_teams_approval_push(proposal_id: int) -> None:
+def schedule_teams_approval_push(proposal_id: int, *, force: bool = False) -> None:
     """Fire-and-forget Teams card delivery so orchestration never blocks on Bot Framework."""
+    if not teams_push_allowed():
+        _log_teams_push_suppressed(proposal_id, "approval_card")
+        return
+    if force:
+        _clear_teams_approval_notification(proposal_id)
+        _inflight_scheduled_pushes.discard(proposal_id)
+    elif proposal_id in _inflight_scheduled_pushes:
+        logger.info(
+            "Teams approval push already scheduled for proposal %s — skipping duplicate.",
+            proposal_id,
+        )
+        return
+    elif _teams_approval_already_notified(proposal_id):
+        logger.info(
+            "Teams approval already notified for proposal %s — not scheduling another push.",
+            proposal_id,
+        )
+        return
+    elif _teams_push_on_cooldown(proposal_id):
+        logger.info(
+            "Teams approval push on cooldown for proposal %s — not scheduling another push.",
+            proposal_id,
+        )
+        return
+
+    _inflight_scheduled_pushes.add(proposal_id)
+
+    async def _deliver() -> None:
+        try:
+            await push_approval_card_for_proposal_id(proposal_id, force=force)
+        finally:
+            _inflight_scheduled_pushes.discard(proposal_id)
+
     try:
-        coro = push_approval_card_for_proposal_id(proposal_id)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(_deliver())
+            return
+        loop.create_task(_deliver())
+    except Exception as exc:
+        _inflight_scheduled_pushes.discard(proposal_id)
+        logger.exception(
+            "Failed to schedule Teams approval push for proposal %s: %s",
+            proposal_id,
+            exc,
+        )
+
+
+async def push_invite_prompt_for_proposal_id(proposal_id: int) -> None:
+    """Ask Kory to send the Outlook invite after recipient picked a slot."""
+    from app.agents.comms_agent import get_lexi_invite_queue
+
+    item = next(
+        (row for row in get_lexi_invite_queue() if row.proposal_id == proposal_id),
+        None,
+    )
+    if item is None:
+        logger.info(
+            "No pending_invite payload for Teams push (proposal_id=%s).",
+            proposal_id,
+        )
+        return
+
+    text = (
+        f"**Lexi — send calendar invite?**\n"
+        f"{format_approval_notification(item)}\n\n"
+        f"Recipient picked a time — approve the invite card when ready."
+    )
+    await push_approval_text_to_teams(text, proposal_id=proposal_id)
+    if not settings.lexi_teams_text_only:
+        await push_approval_card_to_teams(
+            {"id": item.proposal_id, "thread_id": item.thread_id},
+            item.approval_card,
+        )
+    _mark_teams_push_sent(proposal_id)
+
+
+def schedule_teams_invite_prompt_push(proposal_id: int) -> None:
+    """Fire-and-forget Teams notification: send calendar invite?"""
+    if not teams_push_allowed():
+        _log_teams_push_suppressed(proposal_id, "invite_prompt")
+        return
+    try:
+        coro = push_invite_prompt_for_proposal_id(proposal_id)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             asyncio.run(coro)
             return
-
         loop.create_task(coro)
     except Exception as exc:
         logger.exception(
-            "Failed to schedule Teams approval push for proposal %s: %s",
+            "Failed to schedule Teams invite prompt for proposal %s: %s",
+            proposal_id,
+            exc,
+        )
+
+
+async def push_reoffer_prompt_for_proposal_id(proposal_id: int, *, reply_body: str = "") -> None:
+    from app.agents.comms_agent import STATUS_PENDING_REOFFER
+    from app.storage.lexi_db import get_lexi_connection
+    from app.utils.teams_cards import generate_reoffer_prompt_card
+
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT p.id, p.thread_id, e.subject, e.sender
+            FROM proposals p
+            INNER JOIN email_threads e ON e.thread_id = p.thread_id
+            WHERE p.id = ? AND p.status = ?
+            """,
+            (proposal_id, STATUS_PENDING_REOFFER),
+        ).fetchone()
+    if not row:
+        return
+
+    card = generate_reoffer_prompt_card(
+        {"id": proposal_id},
+        {"subject": row["subject"], "sender": row["sender"]},
+        reply_preview=reply_body,
+    )
+    text = (
+        f"**Lexi — send more times?**\n"
+        f"**{row['subject'] or '(no subject)'}** from {row['sender'] or 'unknown'}\n"
+        f"They said the offered times don't work."
+    )
+    await push_approval_text_to_teams(text, proposal_id=proposal_id)
+    if not settings.lexi_teams_text_only:
+        await push_approval_card_to_teams({"id": proposal_id}, card)
+    _mark_teams_push_sent(proposal_id)
+
+
+def schedule_teams_reoffer_prompt_push(proposal_id: int, *, reply_body: str = "") -> None:
+    if not teams_push_allowed():
+        _log_teams_push_suppressed(proposal_id, "reoffer_prompt")
+        return
+    try:
+        coro = push_reoffer_prompt_for_proposal_id(proposal_id, reply_body=reply_body)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+            return
+        loop.create_task(coro)
+    except Exception as exc:
+        logger.exception(
+            "Failed to schedule Teams reoffer prompt for proposal %s: %s",
+            proposal_id,
+            exc,
+        )
+
+
+async def push_scheduling_guidance_for_proposal_id(
+    proposal_id: int,
+    *,
+    summary: str,
+) -> None:
+    """Ask Kory for scheduling guidance when delegation succeeded but slots did not."""
+    from app.bot.teams_text import format_scheduling_guidance_notification
+
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT p.id, p.intent_classification, e.subject, e.sender
+            FROM proposals p
+            INNER JOIN email_threads e ON e.thread_id = p.thread_id
+            WHERE p.id = ?
+            """,
+            (proposal_id,),
+        ).fetchone()
+    if not row:
+        logger.info("No proposal for scheduling guidance push (proposal_id=%s).", proposal_id)
+        return
+
+    text = format_scheduling_guidance_notification(
+        subject=str(row["subject"] or ""),
+        sender=str(row["sender"] or ""),
+        summary=summary,
+        intent=str(row["intent_classification"] or ""),
+    )
+    await push_approval_text_to_teams(text, proposal_id=proposal_id)
+    _mark_teams_push_sent(proposal_id)
+
+
+def schedule_teams_scheduling_guidance_push(
+    proposal_id: int,
+    *,
+    summary: str,
+    force: bool = False,
+) -> None:
+    """Fire-and-forget Teams text when scheduling blocked (Heidi escalation ping)."""
+    if not teams_push_allowed():
+        _log_teams_push_suppressed(proposal_id, "scheduling_guidance")
+        return
+    if force:
+        _clear_teams_approval_notification(proposal_id)
+
+    async def _deliver() -> None:
+        await push_scheduling_guidance_for_proposal_id(proposal_id, summary=summary)
+
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(_deliver())
+            return
+        loop.create_task(_deliver())
+    except Exception as exc:
+        logger.exception(
+            "Failed to schedule Teams scheduling guidance for proposal %s: %s",
+            proposal_id,
+            exc,
+        )
+
+
+async def push_hold_reminder_for_proposal_id(proposal_id: int) -> None:
+    """Notify Kory first with hold reminder draft, then approval card."""
+    from app.scheduling.hold_reminder import HOLD_REMINDER_PREFIX
+
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT p.id, p.drafted_reply, p.scheduling_note, e.subject, e.sender
+            FROM proposals p
+            INNER JOIN email_threads e ON e.thread_id = p.thread_id
+            WHERE p.id = ?
+            """,
+            (proposal_id,),
+        ).fetchone()
+    if not row:
+        return
+
+    note = str(row["scheduling_note"] or "")
+    if not note.startswith(HOLD_REMINDER_PREFIX):
+        return
+
+    subject = str(row["subject"] or "(no subject)")
+    sender = str(row["sender"] or "unknown")
+    preview = str(row["drafted_reply"] or "")[:400]
+    text = (
+        f"**Lexi — hold reminder draft (approve to send)**\n"
+        f"**{subject}**\n"
+        f"From {sender}\n\n"
+        f"No reply after {kory_rules.HOLD_RULES.get('reminder_after_days', 3)} days — "
+        f"review the reminder below and tap **Send** when ready.\n\n"
+        f"{preview}"
+    )
+    await push_approval_text_to_teams(text, proposal_id=proposal_id)
+    if not settings.lexi_teams_text_only:
+        await push_approval_card_for_proposal_id(proposal_id, force=True)
+    else:
+        _mark_teams_push_sent(proposal_id)
+
+
+def schedule_teams_hold_reminder_push(proposal_id: int) -> None:
+    """Fire-and-forget Teams notification for hold reminder approval."""
+    if not teams_push_allowed():
+        _log_teams_push_suppressed(proposal_id, "hold_reminder")
+        return
+    try:
+        coro = push_hold_reminder_for_proposal_id(proposal_id)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+            return
+        loop.create_task(coro)
+    except Exception as exc:
+        logger.exception(
+            "Failed to schedule Teams hold reminder for proposal %s: %s",
             proposal_id,
             exc,
         )

@@ -15,6 +15,7 @@ _APPROVE_RE = re.compile(
     r"^(?:approve|yes|send)\s+#?(\d+)(?:\s+option\s+(\d+))?$",
     re.IGNORECASE,
 )
+_SEND_ONLY_RE = re.compile(r"^send$", re.IGNORECASE)
 _REJECT_RE = re.compile(r"^(?:reject|no|discard)\s+#?(\d+)(?:\s*[—\-:]\s*(.+))?$", re.IGNORECASE)
 _PENDING_RE = re.compile(r"^(?:pending|queue|status)$", re.IGNORECASE)
 _DRAFT_YES_RE = re.compile(
@@ -26,11 +27,58 @@ _DRAFT_NO_RE = re.compile(
     re.IGNORECASE,
 )
 _INBOUND_RE = re.compile(r"^(?:inbound|new|emails)$", re.IGNORECASE)
+_INBOX_REVIEW_RE = re.compile(r"^inbox\s+review$", re.IGNORECASE)
+_UNANSWERED_RE = re.compile(r"^(?:unanswered|unanswered\s+emails?)$", re.IGNORECASE)
+_TODAY_RE = re.compile(r"^(?:today|calendar\s+today|today'?s?\s+calendar)$", re.IGNORECASE)
+_PREBRIEF_RE = re.compile(r"^(?:prebrief|pre-?meeting(?:\s+brief)?s?)$", re.IGNORECASE)
+_BRIEFING_RE = re.compile(r"^(?:brief|briefing|ceo\s+brief|morning\s+brief)$", re.IGNORECASE)
+_OUTREACH_LIST_RE = re.compile(r"^outreach(?:\s+list)?$", re.IGNORECASE)
+_OUTREACH_GET_RE = re.compile(r"^outreach\s+(camp-[a-z0-9]+)$", re.IGNORECASE)
+_APPROVE_OUTREACH_RE = re.compile(r"^approve\s+outreach\s+(camp-[a-z0-9]+)$", re.IGNORECASE)
+_SEND_OUTREACH_RE = re.compile(r"^send\s+outreach\s+(camp-[a-z0-9]+)$", re.IGNORECASE)
 _HELP_RE = re.compile(r"^(?:help|\?)$", re.IGNORECASE)
 _SHOW_DRAFT_RE = re.compile(
     r"^(?:show|view|display)(?:\s+me)?(?:\s+the)?\s+draft(?:\s+(?:for|on))?\s+(?:email\s+)?#?(\d+)$",
     re.IGNORECASE,
 )
+
+
+def format_pending_approval_digest(items: list) -> str:
+    """Hermes/Teams-friendly queue summary with clear line breaks."""
+    from app.bot.teams_format import display_sender, display_subject
+
+    count = len(items)
+    if count == 0:
+        return "No drafts waiting for approval."
+    header = (
+        f"Hey Kory! You have **{count} pending scheduling request"
+        f"{'s' if count != 1 else ''}** awaiting your approval:\n"
+    )
+    lines = [header]
+    for item in items[:10]:
+        subject = display_subject(getattr(item, "subject", None) or item.get("subject"))
+        sender_raw = getattr(item, "sender", None) or item.get("sender") or "unknown"
+        sender = display_sender(str(sender_raw))
+        intent = getattr(item, "intent_classification", None) or item.get("intent_classification") or "unknown"
+        from app.scheduling.meeting_type import resolve_meeting_type
+
+        spec = resolve_meeting_type(
+            intent=str(intent),
+            subject=str(getattr(item, "subject", None) or item.get("subject") or ""),
+            body=str(getattr(item, "raw_body", None) or item.get("raw_body") or ""),
+        )
+        type_label = spec.card_type_label()
+        lines.append(f"📇 **{subject}**")
+        lines.append(f"**From:** {sender} ({sender_raw})")
+        lines.append(f"**Type:** {type_label}")
+        body = (getattr(item, "raw_body", None) or item.get("raw_body") or "").strip()
+        if body:
+            preview = body.replace("\n", " ")
+            if len(preview) > 220:
+                preview = preview[:217] + "…"
+            lines.append(f"> {preview}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def format_pending_list(items: list[LexiQueueItem]) -> str:
@@ -54,6 +102,21 @@ def format_pending_list(items: list[LexiQueueItem]) -> str:
 
 def format_approval_notification(item: LexiQueueItem) -> str:
     return _format_approval_text(item, include_draft=True)
+
+
+def format_scheduling_guidance_notification(
+    *,
+    subject: str,
+    sender: str,
+    summary: str,
+    intent: str = "",
+) -> str:
+    from app.bot.teams_format import display_sender, display_subject
+
+    who = display_sender(sender)
+    topic = display_subject(subject)
+    line = (summary or "I couldn't find a slot in that window.").strip().rstrip(".")
+    return f"**{topic}** ({who})\n\n{line}."
 
 
 def format_reply_prompt_notification(item: dict) -> str:
@@ -126,6 +189,59 @@ def parse_teams_command(text: str) -> dict[str, Any] | None:
 
     if _INBOUND_RE.match(normalized):
         return {"action": "inbound"}
+
+    if _INBOX_REVIEW_RE.match(normalized):
+        return {"action": "inbox_review"}
+
+    if _UNANSWERED_RE.match(normalized):
+        return {"action": "unanswered"}
+
+    if _TODAY_RE.match(normalized):
+        return {"action": "today"}
+
+    if _PREBRIEF_RE.match(normalized):
+        return {"action": "prebrief"}
+
+    if _BRIEFING_RE.match(normalized):
+        return {"action": "daily_briefing"}
+
+    if _OUTREACH_LIST_RE.match(normalized):
+        return {"action": "outreach_list"}
+
+    get_outreach = _OUTREACH_GET_RE.match(normalized)
+    if get_outreach:
+        return {"action": "outreach_get", "campaign_id": get_outreach.group(1)}
+
+    approve_outreach = _APPROVE_OUTREACH_RE.match(normalized)
+    if approve_outreach:
+        return {
+            "action": "outreach_approve",
+            "campaign_id": approve_outreach.group(1),
+        }
+
+    send_outreach = _SEND_OUTREACH_RE.match(normalized)
+    if send_outreach:
+        return {
+            "action": "outreach_send",
+            "campaign_id": send_outreach.group(1),
+        }
+
+    if _SEND_ONLY_RE.match(normalized):
+        pending = get_lexi_pending_queue()
+        if len(pending) == 1:
+            return {
+                "action": "approve",
+                "proposal_id": pending[0].proposal_id,
+                "option": 1,
+            }
+        if len(pending) > 1:
+            return {
+                "action": "unresolved",
+                "message": (
+                    "More than one draft is waiting — use the **Send** button on the card, "
+                    "or say e.g. _Send reply to Dan Smith — Project Paint_."
+                ),
+            }
 
     draft_no = _DRAFT_NO_RE.match(normalized)
     if draft_no:
@@ -205,8 +321,17 @@ TEAMS_HELP_TEXT = """**Lexi**
 - Ask naturally: "draft a reply to Dan about payroll" or use card buttons
 - `pending` — drafts ready to send
 - `inbound` — mail waiting for your draft yes/no
+- `inbox review` — last 48 hours of activity + what needs action
+- `unanswered` — emails you may still need to reply to
+- `today` — today's calendar
+- `prebrief` — pre-meeting briefs (who introduced + context)
+- `brief` — full morning CEO briefing
+- `outreach` — list staged outreach campaigns
+- `outreach camp-…` — show campaign drafts
+- `approve outreach camp-…` — mark approved (does not send)
+- `send outreach camp-…` — blocked until live sends are enabled
 - Card buttons use the email subject and sender (no numeric ids)
 - Approval cards have an editable draft — edit in the card, Save draft, then Send
 - Approve in chat only when you want it sent
 
-Important mail only — calendar accepts and digests are skipped."""
+Notifications: when you CC Lexi, when someone replies on a Lexi thread, or important scheduling mail."""

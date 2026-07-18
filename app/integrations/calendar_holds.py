@@ -11,29 +11,25 @@ from app.integrations.outlook_calendar import has_conflict, has_write_calendar_c
 
 def place_tentative_hold(
     *,
-    title: str,
-    start_iso: str,
-    end_iso: str,
-    notes: str = "",
+    action: dict[str, Any],
     calendar_name: str | None = None,
 ) -> dict[str, Any]:
-    """Create a Hold - event on write calendar; returns event_id or error."""
-    subject = title.strip()
-    if not subject.lower().startswith("hold"):
-        subject = f"Hold - {subject}"
+    """Create a Hold event on the write calendar; returns event_id or error."""
+    hold_action = dict(action)
+    title = str(hold_action.get("title") or "HOLD: Meeting").strip()
+    if not title.upper().startswith("HOLD:"):
+        hold_action["title"] = f"HOLD: {title}"
+    hold_action.setdefault("attendees", [])
+    hold_action.setdefault("is_online_meeting", False)
+    hold_action.setdefault(
+        "body",
+        hold_action.get("body") or "Lexi tentative hold while options are offered.",
+    )
 
-    action = {
-        "title": subject,
-        "start": start_iso,
-        "end": end_iso,
-        "attendees": [],
-        "location": "TBD",
-        "body": notes or "Lexi tentative hold while options are offered.",
-    }
     if settings.lexi_write_mode == "sandbox":
-        conflict, conflicts, _ = has_write_calendar_conflict(action)
+        conflict, conflicts, _ = has_write_calendar_conflict(hold_action)
     else:
-        conflict, conflicts, _ = has_conflict(action)
+        conflict, conflicts, _ = has_conflict(hold_action)
     if conflict:
         return {
             "ok": False,
@@ -42,10 +38,10 @@ def place_tentative_hold(
         }
 
     target_calendar = (calendar_name or "").strip() or default_write_calendar_name()
-    event_id, log_id = create_event_on_calendar(action, calendar_name=target_calendar)
+    event_id, log_id = create_event_on_calendar(hold_action, calendar_name=target_calendar)
     return {
         "ok": bool(event_id),
         "event_id": event_id,
         "composio_log_id": log_id,
-        "action": action,
+        "action": hold_action,
     }

@@ -2,17 +2,39 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
-
-from app.config import settings
 
 import rules as kory_rules
+from app.scheduling.busy_intervals import (
+    events_on_local_date,
+    intervals_overlap,
+    local_dt,
+    parse_event_datetime,
+    parse_iso_datetime,
+    slot_interval,
+)
+from app.scheduling.preferences import SchedulingPreferences, load_scheduling_preferences
 
 DINNER_INTENTS = frozenset({"dinner_request", "dinner"})
 EVENING_INTENTS = frozenset(DINNER_INTENTS | {"happy_hour"})
+IN_PERSON_INTENTS = frozenset(
+    {"coffee", "happy_hour", "dinner", "dinner_request", "lunch", "lunch_request", "new_client"}
+)
+VIRTUAL_INFORMAL_INTENTS = frozenset(
+    {
+        "virtual_30",
+        "referral_or_intro",
+        "meeting_request",
+        "internal_sync",
+        "delegation",
+        "reschedule",
+        "unknown",
+        "podcast",
+    }
+)
 
 
 @dataclass
@@ -31,20 +53,6 @@ class ValidationResult:
         }
 
 
-def _parse_slot(value: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-
-
-def _local_dt(dt: datetime) -> datetime:
-    tz = ZoneInfo(settings.scheduling_timezone)
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=tz)
-    return dt.astimezone(tz)
-
-
 def _parse_hhmm(value: str) -> tuple[int, int]:
     hour, minute = (int(x) for x in value.split(":"))
     return hour, minute
@@ -57,7 +65,6 @@ def _slot_overlaps_block(
     block_start: str,
     block_end: str,
 ) -> bool:
-    """True if [start_local, end_local) overlaps [block_start, block_end) on same day."""
     bs_h, bs_m = _parse_hhmm(block_start)
     be_h, be_m = _parse_hhmm(block_end)
     block_start_dt = start_local.replace(hour=bs_h, minute=bs_m, second=0, microsecond=0)
@@ -72,7 +79,6 @@ def _check_timed_hard_blocks(
     prefix: str,
     result: ValidationResult,
 ) -> None:
-    """Reject slots overlapping rules.py HARD_BLOCKS with fixed day/time windows."""
     result.rules_checked.append("hard_blocks")
     for block in kory_rules.HARD_BLOCKS:
         days = block.get("days")
@@ -95,36 +101,240 @@ def _check_timed_hard_blocks(
             )
 
 
+def _is_travel_day(day_local: datetime, busy_events: list[dict[str, Any]]) -> bool:
+    for event in events_on_local_date(busy_events, day_local):
+        if str(event.get("blocking_class") or "") == "travel_blocking":
+            return True
+        subject = str(event.get("subject") or "").lower()
+        if any(k in subject for k in ("flight to", "flight from", "stay at", "safari", "check-in")):
+            return True
+    return False
+
+
+def _week_key(day_local: datetime) -> str:
+    iso = day_local.isocalendar()
+    return f"{iso.year}-W{iso.week:02d}"
+
+
+def _count_weekly_pattern(
+    busy_events: list[dict[str, Any]],
+    week_key: str,
+    pattern: re.Pattern[str],
+) -> int:
+    count = 0
+    for event in busy_events:
+        start = parse_event_datetime(event.get("start"))
+        if not start:
+            continue
+        if _week_key(local_dt(start)) != week_key:
+            continue
+        if pattern.search(str(event.get("subject") or "")):
+            count += 1
+    return count
+
+
+def _happy_hour_on_day(day_local: datetime, busy_events: list[dict[str, Any]]) -> datetime | None:
+    for event in events_on_local_date(busy_events, day_local):
+        if re.search(r"happy\s*hour", str(event.get("subject") or ""), re.I):
+            start = parse_event_datetime(event.get("start"))
+            if start:
+                return local_dt(start)
+    return None
+
+
+_COFFEE_SUBJECT = re.compile(r"\bcoffee\b", re.I)
+_IN_PERSON_EVENT = re.compile(
+    r"coffee|happy\s*hour|\bdinner\b|\blunch\b|cherry creek|olive|aviano|grill|hillstone|in person",
+    re.I,
+)
+_BREAK_EVENT = re.compile(r"\bwob\b|inbox\s+review|personal\s+training|trainer", re.I)
+
+
+def _is_in_person_event(event: dict[str, Any]) -> bool:
+    subject = str(event.get("subject") or "")
+    if _IN_PERSON_EVENT.search(subject):
+        return True
+    return str(event.get("blocking_class") or "") == "in_person"
+
+
+def _is_break_event(event: dict[str, Any]) -> bool:
+    return bool(_BREAK_EVENT.search(str(event.get("subject") or "")))
+
+
+def _default_drive_minutes() -> int:
+    return int(kory_rules.TRAVEL_TIMES.get("Cherry Creek", {}).get("drive_minutes", 15))
+
+
+def _drive_time_conflict(
+    slot_start: datetime,
+    slot_end: datetime,
+    busy_events: list[dict[str, Any]],
+    *,
+    fmt: str,
+    intent_key: str,
+) -> bool:
+    """Require drive gap between consecutive in-person meetings (Cherry Creek default)."""
+    if fmt != "in_person" and intent_key not in IN_PERSON_INTENTS:
+        return False
+    drive = _default_drive_minutes()
+    for event in events_on_local_date(busy_events, slot_start):
+        if not _is_in_person_event(event):
+            continue
+        event_start = parse_event_datetime(event.get("start"))
+        event_end = parse_event_datetime(event.get("end"))
+        if not event_start or not event_end:
+            continue
+        event_start = local_dt(event_start)
+        event_end = local_dt(event_end)
+        if event_end <= slot_start:
+            gap = int((slot_start - event_end).total_seconds() // 60)
+            if 0 <= gap < drive:
+                return True
+        if event_start >= slot_end:
+            gap = int((event_start - slot_end).total_seconds() // 60)
+            if 0 <= gap < drive:
+                return True
+    return False
+
+
+def _virtual_back_to_back_conflict(
+    slot_start: datetime,
+    busy_events: list[dict[str, Any]],
+) -> bool:
+    """After 2 hours of back-to-back meetings, Kory needs a 30-minute break."""
+    max_block = int(kory_rules.BUFFER_RULES.get("max_back_to_back_block_hours", 2)) * 60
+    break_minutes = int(kory_rules.BUFFER_RULES.get("break_after_block_minutes", 30))
+    day_events: list[tuple[datetime, datetime, dict[str, Any]]] = []
+    for event in events_on_local_date(busy_events, slot_start):
+        if _is_break_event(event):
+            continue
+        event_start = parse_event_datetime(event.get("start"))
+        event_end = parse_event_datetime(event.get("end"))
+        if not event_start or not event_end:
+            continue
+        day_events.append((local_dt(event_start), local_dt(event_end), event))
+    day_events.sort(key=lambda item: item[1])
+
+    chain_end = slot_start
+    chain_minutes = 0
+    for event_start, event_end, _event in reversed(day_events):
+        if event_end > chain_end:
+            continue
+        gap = int((chain_end - event_end).total_seconds() // 60)
+        if gap > 5:
+            break
+        chain_minutes += int((event_end - event_start).total_seconds() // 60)
+        chain_end = event_start
+        if chain_minutes >= max_block:
+            break
+
+    if chain_minutes < max_block:
+        return False
+    gap_before = int((slot_start - chain_end).total_seconds() // 60)
+    return gap_before < break_minutes
+
+
+def _is_coffee_event(event: dict[str, Any]) -> bool:
+    return bool(_COFFEE_SUBJECT.search(str(event.get("subject") or "")))
+
+
+def _coffee_post_buffer_minutes() -> int:
+    return int(kory_rules.BUFFER_RULES.get("coffee_post_buffer_minutes", 30))
+
+
+def _coffee_meeting_duration_minutes() -> int:
+    return int(kory_rules.MEETING_TYPES.get("coffee", {}).get("duration_minutes") or 60)
+
+
+def _coffee_buffer_conflict(
+    slot_start: datetime,
+    busy_events: list[dict[str, Any]],
+) -> bool:
+    """True when slot starts inside the post-coffee buffer of an existing coffee."""
+    buffer_minutes = _coffee_post_buffer_minutes()
+    for event in busy_events:
+        if not _is_coffee_event(event):
+            continue
+        event_start = parse_event_datetime(event.get("start"))
+        event_end = parse_event_datetime(event.get("end"))
+        if not event_start or not event_end:
+            continue
+        event_end_local = local_dt(event_end)
+        buffer_end = event_end_local + timedelta(minutes=buffer_minutes)
+        slot_start_local = local_dt(slot_start)
+        if event_end_local <= slot_start_local < buffer_end:
+            return True
+    return False
+
+
+def _infer_format(intent_key: str, meeting_format: str | None) -> str:
+    if meeting_format in {"virtual", "in_person"}:
+        return meeting_format
+    if intent_key in IN_PERSON_INTENTS and intent_key not in VIRTUAL_INFORMAL_INTENTS:
+        if intent_key in {"lunch", "lunch_request"}:
+            return "in_person"
+        return "in_person"
+    return "virtual"
+
+
+def _preferred_coffee_times() -> set[str]:
+    raw = kory_rules.MEETING_TYPES.get("coffee", {}).get("preferred_times", ["08:30", "09:00"])
+    return {str(value).strip() for value in raw if str(value).strip()}
+
+
 def validate_proposal_slots(
     slots: list[dict[str, str]],
     *,
     intent: str | None = None,
+    meeting_format: str | None = None,
+    urgent: bool = False,
+    busy_events: list[dict[str, Any]] | None = None,
+    preferences: SchedulingPreferences | None = None,
+    batch_slots: list[dict[str, str]] | None = None,
 ) -> ValidationResult:
     """Validate proposed slots against Kory rules before staging approval."""
     result = ValidationResult(valid=True)
     intent_key = (intent or "unknown").lower().replace(" ", "_")
+    fmt = _infer_format(intent_key, meeting_format)
+    busy = list(busy_events or [])
+    prefs = preferences or load_scheduling_preferences()
+    all_batch = list(batch_slots or slots)
 
     if not slots:
         result.valid = False
         result.violations.append("No slots proposed.")
         return result
 
+    if intent_key in {"lunch", "lunch_request"} and not prefs.lunch_allowed and not urgent:
+        result.valid = False
+        result.violations.append("Lunch meetings are exception-only unless Kory allows via memory/urgent.")
+
     for index, slot in enumerate(slots, start=1):
-        start_raw = str(slot.get("start") or "")
-        end_raw = str(slot.get("end") or "")
-        start = _parse_slot(start_raw)
-        end = _parse_slot(end_raw)
+        start = parse_iso_datetime(str(slot.get("start") or ""))
+        end = parse_iso_datetime(str(slot.get("end") or ""))
         if not start or not end:
             result.valid = False
             result.violations.append(f"Option {index}: invalid ISO start/end.")
             continue
 
-        start_local = _local_dt(start)
-        end_local = _local_dt(end)
+        start_local = local_dt(start)
+        end_local = local_dt(end)
         weekday = start_local.strftime("%A")
         prefix = f"Option {index} ({weekday} {start_local.strftime('%H:%M')} MT)"
 
+        result.rules_checked.append("calendar_conflict")
+        if busy and slot_conflicts_busy(slot, busy):
+            result.valid = False
+            result.violations.append(f"{prefix}: overlaps Kory's calendar.")
+
         _check_timed_hard_blocks(start_local, end_local, weekday, prefix, result)
+
+        result.rules_checked.append("travel_day")
+        if _is_travel_day(start_local, busy) and not urgent:
+            result.valid = False
+            result.violations.append(
+                f"{prefix}: Kory is traveling this day — no new meetings (2–3 critical check-ins only)."
+            )
 
         result.rules_checked.append("weekend_availability")
         day_rules = kory_rules.DAILY_AVAILABILITY.get(weekday, {})
@@ -143,68 +353,155 @@ def validate_proposal_slots(
                 result.valid = False
                 result.violations.append(f"{prefix}: ends after 6 PM (non-dinner).")
 
-        result.rules_checked.append("daily_latest_window")
-        latest = day_rules.get("latest")
-        if latest and intent_key not in DINNER_INTENTS:
-            latest_hour, latest_min = (int(x) for x in latest.split(":"))
-            if start_local.hour > latest_hour or (
-                start_local.hour == latest_hour and start_local.minute >= latest_min
-            ):
-                result.warnings.append(
-                    f"{prefix}: starts at or after daily latest ({latest})."
-                )
-
-        result.rules_checked.append("workout_day_formal")
-        if weekday in kory_rules.WORKOUT_DAYS and intent_key in {
-            "coffee",
-            "lunch_request",
-            "lunch",
-            "dinner_request",
-            "dinner",
-            "happy_hour",
-            "pitch",
-            "new_client",
-        }:
-            formal_earliest = day_rules.get("earliest_formal_inperson", "09:30")
-            fe_h, fe_m = _parse_hhmm(formal_earliest)
-            if start_local.hour < fe_h or (
-                start_local.hour == fe_h and start_local.minute < fe_m
-            ):
+        result.rules_checked.append("earliest_by_day")
+        if weekday in kory_rules.WORKOUT_DAYS:
+            if fmt == "virtual" and intent_key in VIRTUAL_INFORMAL_INTENTS | {"virtual_30", "unknown"}:
+                earliest = day_rules.get("earliest_virtual_informal", "08:00")
+            else:
+                earliest = day_rules.get("earliest_formal_inperson", "09:30")
+            eh, em = _parse_hhmm(earliest)
+            if start_local.hour < eh or (start_local.hour == eh and start_local.minute < em):
                 result.valid = False
-                result.violations.append(
-                    f"{prefix}: M/W/F in-person/formal meetings earliest {formal_earliest} "
-                    f"(virtual informal OK from 8:00)."
-                )
+                result.violations.append(f"{prefix}: earliest on {weekday} is {earliest} for this format.")
+        elif weekday in kory_rules.EARLY_START_DAYS:
+            earliest = day_rules.get("earliest_default", "09:00")
+            eh, em = _parse_hhmm(earliest)
+            if start_local.hour < eh or (start_local.hour == eh and start_local.minute < em):
+                # Kory's written coffee rules explicitly prefer 8:30/9:00 AM, including Tue/Thu.
+                # Keep the stricter early-start guard for other meeting types.
+                if intent_key == "coffee" and start_local.strftime("%H:%M") in _preferred_coffee_times():
+                    pass
+                elif not urgent and start_local.hour < 7:
+                    result.valid = False
+                    result.violations.append(
+                        f"{prefix}: Tue/Thu before 7 AM only for East Coast / urgent requests."
+                    )
+                elif start_local.hour < eh:
+                    result.valid = False
+                    result.violations.append(f"{prefix}: earliest on {weekday} is {earliest}.")
 
-        result.rules_checked.append("happy_hour_end")
-        if intent_key in {"happy_hour"}:
+        result.rules_checked.append("happy_hour_rules")
+        if intent_key == "happy_hour":
             if end_local.hour > 18 or (end_local.hour == 18 and end_local.minute > 0):
                 result.valid = False
                 result.violations.append(f"{prefix}: happy hour must end by 6:00 PM.")
+            if weekday == "Friday":
+                result.warnings.append(f"{prefix}: happy hour on Friday is discouraged.")
+            week = _week_key(start_local)
+            existing_hh = _count_weekly_pattern(busy, week, re.compile(r"happy\s*hour", re.I))
+            proposed_hh = sum(
+                1
+                for s in slots[:index]
+                if intent_key == "happy_hour"
+                and _week_key(local_dt(parse_iso_datetime(str(s.get("start") or "")) or start_local))
+                == week
+            ) + (1 if intent_key == "happy_hour" else 0)
+            if existing_hh + proposed_hh > prefs.happy_hour_max_per_week:
+                result.valid = False
+                result.violations.append(
+                    f"{prefix}: exceeds happy hour cap ({prefs.happy_hour_max_per_week}/week)."
+                )
 
-        duration_min = int((end_local - start_local).total_seconds() // 60)
-        result.rules_checked.append("meeting_duration")
-        if intent_key in {"lunch_request", "lunch"}:
-            result.warnings.append(
-                f"{prefix}: lunch meetings are exception-only per Kory rules."
+        result.rules_checked.append("dinner_rules")
+        if intent_key in DINNER_INTENTS:
+            week = _week_key(start_local)
+            existing_din = _count_weekly_pattern(
+                busy, week, re.compile(r"\bdinner\b|dinner request", re.I)
             )
-        if intent_key in {"coffee"} and duration_min < 45:
-            result.warnings.append(f"{prefix}: coffee meetings usually need ~60–90 min block.")
+            proposed_din = sum(
+                1
+                for s in slots[:index]
+                if _week_key(local_dt(parse_iso_datetime(str(s.get("start") or "")) or start_local))
+                == week
+                and intent_key in DINNER_INTENTS
+            ) + (1 if intent_key in DINNER_INTENTS else 0)
+            if existing_din + proposed_din > prefs.dinner_max_per_week:
+                result.valid = False
+                result.violations.append(
+                    f"{prefix}: exceeds dinner cap ({prefs.dinner_max_per_week}/week)."
+                )
+
+        result.rules_checked.append("post_happy_hour")
+        hh_start = _happy_hour_on_day(start_local, busy)
+        if hh_start and intent_key not in DINNER_INTENTS:
+            if start_local >= hh_start:
+                result.valid = False
+                result.violations.append(
+                    f"{prefix}: nothing scheduled after happy hour (family time)."
+                )
+
+        result.rules_checked.append("coffee_buffer")
+        if intent_key == "coffee":
+            meeting_end = start_local + timedelta(minutes=_coffee_meeting_duration_minutes())
+            buffer_end = meeting_end + timedelta(minutes=_coffee_post_buffer_minutes())
+            for event in busy:
+                event_start = parse_event_datetime(event.get("start"))
+                event_end = parse_event_datetime(event.get("end"))
+                if not event_start or not event_end:
+                    continue
+                if intervals_overlap(meeting_end, buffer_end, event_start, event_end):
+                    result.valid = False
+                    result.violations.append(
+                        f"{prefix}: coffee requires 30 min after — calendar conflict in buffer."
+                    )
+
+        result.rules_checked.append("post_coffee_buffer")
+        if _coffee_buffer_conflict(start_local, busy):
+            result.valid = False
+            result.violations.append(
+                f"{prefix}: cannot schedule immediately after a coffee meeting (30 min buffer)."
+            )
+
+        result.rules_checked.append("drive_time")
+        if _drive_time_conflict(
+            start_local, end_local, busy, fmt=fmt, intent_key=intent_key
+        ):
+            result.valid = False
+            result.violations.append(
+                f"{prefix}: needs { _default_drive_minutes() } min drive time between in-person meetings."
+            )
+
+        result.rules_checked.append("virtual_back_to_back")
+        if fmt == "virtual" and intent_key in VIRTUAL_INFORMAL_INTENTS | {"virtual_30", "new_client"}:
+            if _virtual_back_to_back_conflict(start_local, busy):
+                result.valid = False
+                result.violations.append(
+                    f"{prefix}: needs 30 min break after 2 hours of back-to-back meetings."
+                )
 
     return result
+
+
+def slot_conflicts_busy(slot: dict[str, str], busy_events: list[dict[str, Any]]) -> bool:
+    from app.scheduling.busy_intervals import slot_conflicts_busy as _conflicts
+
+    return _conflicts(slot, busy_events)
 
 
 def filter_slots_by_rules(
     slots: list[dict[str, str]],
     *,
     intent: str | None = None,
+    meeting_format: str | None = None,
+    urgent: bool = False,
+    busy_events: list[dict[str, Any]] | None = None,
+    preferences: SchedulingPreferences | None = None,
 ) -> tuple[list[dict[str, str]], ValidationResult]:
     """Return slots that pass hard validators; attach aggregate result."""
     safe: list[dict[str, str]] = []
     aggregate = ValidationResult(valid=True)
+    prefs = preferences or load_scheduling_preferences()
 
     for slot in slots:
-        check = validate_proposal_slots([slot], intent=intent)
+        check = validate_proposal_slots(
+            [slot],
+            intent=intent,
+            meeting_format=meeting_format,
+            urgent=urgent,
+            busy_events=busy_events,
+            preferences=prefs,
+            batch_slots=slots,
+        )
         aggregate.rules_checked.extend(check.rules_checked)
         aggregate.warnings.extend(check.warnings)
         if check.valid:

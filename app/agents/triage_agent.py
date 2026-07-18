@@ -33,6 +33,9 @@ VALID_INTENTS = frozenset(
         "delegation",
         "non_scheduling",
         "unknown",
+        "referral_or_intro",
+        "meeting_request",
+        "podcast",
     }
 )
 VALID_PRIORITIES = frozenset({"high", "medium", "low"})
@@ -58,7 +61,8 @@ TRIAGE_SYSTEM_PROMPT = """You are Lexi, an executive scheduling triage engine fo
 Analyze the inbound email subject and body.
 
 Return ONLY a single valid JSON object with exactly these keys:
-- intent: string (e.g. board_meeting, dinner_request, lunch_request, pitch, internal_sync, coffee, happy_hour, reschedule, cancellation, delegation, non_scheduling, unknown)
+- intent: string — one of: referral_or_intro, meeting_request, pitch, new_client, coffee, happy_hour, dinner_request, lunch_request, podcast, internal_sync, board_meeting, reschedule, cancellation, delegation, non_scheduling, unknown
+  Use referral_or_intro for 30-minute intro/referral calls. Use pitch or meeting_request for investor/diligence/deal calls (60 min). Use coffee, happy_hour, dinner_request for those meeting types. Use podcast for The Turn podcast recording requests.
 - priority: string, exactly one of high, medium, low
 - confidence_score: float between 0.0 and 1.0
 - justification: string, one sentence explaining intent and priority
@@ -132,12 +136,33 @@ def process_new_email(raw_email: dict[str, Any]) -> int | None:
             )
             final_priority = adjusted_priority
 
+        triage = _correct_misclassified_scheduling_triage(
+            triage,
+            sender=normalized["sender"],
+            subject=normalized["subject"],
+            body=normalized["raw_body"],
+        )
+        final_priority = _scheduling_priority_floor(
+            triage.priority,
+            intent=triage.intent,
+            sender=normalized["sender"],
+        )
+        if final_priority != triage.priority:
+            triage = TriageResult(
+                intent=triage.intent,
+                priority=final_priority,
+                confidence_score=triage.confidence_score,
+                justification=triage.justification,
+                source=triage.source,
+            )
+
         proposal_id = _insert_proposal(
             conn,
             thread_id=thread_id,
             triage=triage,
             final_priority=final_priority,
             rule_reasoning=rule_reasoning,
+            recipient_timezone=normalized.get("recipient_timezone") or None,
         )
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
@@ -206,6 +231,20 @@ def _normalize_raw_email(raw_email: dict[str, Any]) -> dict[str, str]:
     conversation_id = str(raw_email.get("conversation_id") or "").strip()
     message_id = str(raw_email.get("message_id") or thread_id).strip()
 
+    recipient_timezone = str(raw_email.get("recipient_timezone") or "").strip() or None
+    if not recipient_timezone:
+        from app.scheduling.timezone_intel import resolve_recipient_timezone_at_ingest
+
+        tz_result = resolve_recipient_timezone_at_ingest(
+            sender_email=sender,
+            body=raw_body,
+            internet_headers=raw_email.get("internet_message_headers"),
+            received_at=received_at or None,
+            exclude_thread_id=thread_id,
+        )
+        if tz_result.confidence != "unknown":
+            recipient_timezone = tz_result.tz_name()
+
     if conversation_id:
         from app.integrations.outlook_thread import fetch_conversation_context
 
@@ -217,14 +256,28 @@ def _normalize_raw_email(raw_email: dict[str, Any]) -> dict[str, str]:
         if prior:
             raw_body = f"{raw_body}\n\n[Prior messages in this email chain]\n{prior}"
 
+    headers_raw = raw_email.get("internet_message_headers") or raw_email.get("internetMessageHeaders")
+    headers_json = ""
+    if isinstance(headers_raw, list):
+        import json as _json
+
+        headers_json = _json.dumps(headers_raw, default=str)
+
+    from app.storage.recipient_profiles import normalize_sender_email
+
+    sender_email_norm = normalize_sender_email(sender) or sender
+
     return {
         "thread_id": thread_id,
         "message_id": message_id,
         "conversation_id": conversation_id,
         "subject": subject,
         "sender": sender,
+        "sender_email": sender_email_norm,
         "received_at": received_at,
         "raw_body": raw_body,
+        "recipient_timezone": recipient_timezone or "",
+        "internet_headers_json": headers_json,
     }
 
 
@@ -238,15 +291,22 @@ def _ensure_thread(conn: sqlite3.Connection, email: dict[str, str]) -> None:
 
     conn.execute(
         """
-        INSERT INTO email_threads (thread_id, subject, sender, received_at, raw_body)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO email_threads (
+            thread_id, subject, sender, sender_email, received_at, raw_body, conversation_id,
+            recipient_timezone, internet_headers_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email["thread_id"],
             email["subject"],
             email["sender"],
+            email.get("sender_email") or None,
             email["received_at"] or None,
             email["raw_body"],
+            email.get("conversation_id") or None,
+            email.get("recipient_timezone") or None,
+            email.get("internet_headers_json") or None,
         ),
     )
 
@@ -272,25 +332,9 @@ def _call_llm_triage(subject: str, body: str) -> TriageResult:
 
 def _infer_intent_from_text(subject: str, body: str) -> str:
     """Keyword heuristic when the LLM is unavailable."""
-    combined = f"{subject}\n{body}".lower()
-    if any(w in combined for w in ("unsubscribe", "newsletter", "no longer wish")):
-        return "non_scheduling"
-    if "dinner" in combined:
-        return "dinner_request"
-    if "lunch" in combined:
-        return "lunch_request"
-    if "coffee" in combined:
-        return "coffee"
-    if any(w in combined for w in ("reschedule", "move our meeting", "different time")):
-        return "reschedule"
-    if any(w in combined for w in ("cancel", "can't make it", "cannot make it")):
-        return "cancellation"
-    if any(
-        w in combined
-        for w in ("meet", "meeting", "sync", "call", "schedule", "availability", "calendar")
-    ):
-        return "pitch"
-    return "unknown"
+    from app.scheduling.meeting_type import infer_triage_intent_from_text
+
+    return infer_triage_intent_from_text(subject, body)
 
 
 def _fallback_triage(reason: str, *, subject: str = "", body: str = "") -> TriageResult:
@@ -314,6 +358,59 @@ def _fallback_triage(reason: str, *, subject: str = "", body: str = "") -> Triag
         ),
         source="fallback",
     )
+
+
+def _correct_misclassified_scheduling_triage(
+    triage: TriageResult,
+    *,
+    sender: str,
+    subject: str,
+    body: str,
+) -> TriageResult:
+    """Upgrade non_scheduling/unknown when the email clearly requests a meeting."""
+    from app.scheduling.meeting_type import (
+        effective_scheduling_intent,
+        email_requests_scheduling,
+    )
+
+    if triage.intent not in {"non_scheduling", "unknown", "cancellation"}:
+        return triage
+    if not email_requests_scheduling(subject, body):
+        return triage
+
+    corrected = effective_scheduling_intent(triage.intent, subject=subject, body=body)
+    if corrected in {"non_scheduling", "unknown"}:
+        corrected = "referral_or_intro"
+
+    return TriageResult(
+        intent=corrected,
+        priority="medium" if triage.priority == "low" else triage.priority,
+        confidence_score=max(triage.confidence_score, 0.55),
+        justification=(
+            f"{triage.justification} "
+            f"(corrected to {corrected}: email requests scheduling.)"
+        ).strip(),
+        source=triage.source,
+    )
+
+
+def _scheduling_priority_floor(
+    priority: str,
+    *,
+    intent: str,
+    sender: str,
+) -> str:
+    """Scheduling emails and internal senders should not surface as low priority."""
+    if intent == "non_scheduling":
+        return priority
+    if priority != "low":
+        return priority
+    sender_lower = sender.lower()
+    if any(domain in sender_lower for domain in PRIORITY_EMAIL_DOMAINS):
+        return "medium"
+    if intent not in {"non_scheduling", "unknown", "cancellation"}:
+        return "medium"
+    return priority
 
 
 def _coerce_triage_result(payload: dict[str, Any], *, source: str) -> TriageResult:
@@ -432,6 +529,7 @@ def _insert_proposal(
     triage: TriageResult,
     final_priority: str,
     rule_reasoning: dict[str, Any],
+    recipient_timezone: str | None = None,
 ) -> int:
     cursor = conn.execute(
         """
@@ -442,9 +540,10 @@ def _insert_proposal(
             priority_tier,
             rule_reasoning,
             confidence_score,
-            justification
+            justification,
+            recipient_timezone
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             thread_id,
@@ -454,6 +553,7 @@ def _insert_proposal(
             json.dumps(rule_reasoning, default=str),
             triage.confidence_score,
             triage.justification,
+            recipient_timezone,
         ),
     )
     return int(cursor.lastrowid)
@@ -478,69 +578,8 @@ def _maybe_dispatch_asana_booking_reminder(
     proposal_id: int,
     intent: str,
 ) -> None:
-    """Early reminder when inbound mail is lunch/dinner or Kory mentions a meal."""
-    from app.config import settings
-
-    if not settings.asana_enabled:
-        return
-
-    if os.getenv("LEXI_ASANA_AUTO_CREATE", "false").lower() not in {"1", "true", "yes"}:
-        return
-
-    from app.integrations.asana_manager import (
-        create_booking_reminder_task,
-        detect_kory_meal_mention,
-        meal_from_intent,
-        reservation_needed_for_proposal,
-    )
-
-    thread_id = normalized["thread_id"]
-    if _asana_booking_reminder_exists(conn, thread_id):
-        return
-
-    if not reservation_needed_for_proposal(
-        intent=intent,
-        subject=normalized["subject"],
-        body=normalized["raw_body"],
-        sender=normalized["sender"],
-    ):
-        return
-
-    meal = (
-        meal_from_intent(intent)
-        or detect_kory_meal_mention(
-            subject=normalized["subject"],
-            body=normalized["raw_body"],
-            sender=normalized["sender"],
-        )
-    )
-    if not meal:
-        return
-
-    asana_result = create_booking_reminder_task(
-        meal=meal,
-        meeting_subject=normalized["subject"],
-        thread_id=thread_id,
-        sender=normalized["sender"],
-        body_excerpt=normalized["raw_body"],
-        approved=True,
-    )
-    log_level = "INFO" if asana_result.get("ok") else "ERROR"
-    _insert_audit_log(
-        conn,
-        step_name="asana_booking_reminder",
-        reference_id=thread_id,
-        log_level=log_level,
-        message=(
-            f"Asana booking reminder ({meal}) "
-            f"{'created' if asana_result.get('ok') else 'failed'}."
-        ),
-        payload={
-            "proposal_id": proposal_id,
-            "meal": meal,
-            "asana_result": asana_result,
-        },
-    )
+    """Asana reservation reminders — only when Kory explicitly asks in Teams chat."""
+    return
 
 
 def _insert_audit_log(

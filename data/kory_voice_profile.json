@@ -1,26 +1,23 @@
 {
   "tone_hints": [
-    "Preferred closing observed in sent mail: \"Let's Win,,\" then Kory.",
-    "Typical reply length: ~429 characters.",
-    "Common greeting: \"Hi Cheryl Blair,\"."
+    "Typical reply length: ~556 characters.",
+    "Common greeting: \"Hi Lurline Kub,\"."
   ],
   "example_snippets": [
-    "Pilot loopback \u2014 should arrive at sandbox mailbox only.\n\nLet's Win,\nKory",
-    "Hi Cheryl Blair,\nI hope you are having a productive week.\nI've been thinking about your marketing approach lately.\nUsing social media more actively could really help you connect with your audience.\nEngaging content can attract new customers and keep current ones interested.\nConsider creating a content calendar to plan your posts.\nThis could streamline your efforts and improve your online presence.\nBest regards,\nKory IconfoundWMG",
-    "test\n\nLet's Win,\nKory",
-    "Hi Wyatt Lee,\nI wanted to share some thoughts on your recent business strategy.\nIt seems like you are doing great work, but there might be room for improvement.\nConsider focusing on customer feedback to refine your services.\nListening to your clients can lead to better products and happier customers.\nAlso, think about collaborating with other businesses to expand your reach.\nThese steps could help you achieve your goals more effectively.\nBest re\u2026",
-    "Hi Bohdan,\nI hope you are doing well.\nNetworking is a powerful tool in business.\nBuilding strong relationships can open doors to new opportunities.\nConsider attending industry events or joining local business groups.\nThese connections can lead to valuable partnerships and collaborations.\nInvesting time in networking can pay off in the long run.\n\nBest regards Kory IconfoundWMG"
+    "Hi Lurline Kub,\nInnovation is key to staying relevant in business.\nEncourage your team to think creatively and share ideas.\nConsider setting aside time for brainstorming sessions.\nStay open to new technologies that can improve your processes.\nInvesting in innovation can lead to new products and services.\nDon't be afraid to take calculated risks.\nBest regards,\nKory IconfoundWMG",
+    "Robert Pratt,\nI got your info from the YPO Construction Network directory.\u00a0I am a lifelong specialty contractor and fellow YPOer (Rocky Mountains). I took a small family business and built a national environmental services platform (EIS Holdings). We sold the business in 2021, and I left the CEO role in early 2024. Since that time, I launched Iconic Founders Group, which supports blue-collar industry founders through the transaction/exit process\u2026",
+    "Hi Finley Flores,\nCustomer feedback is invaluable for improving your services.\nEncourage your clients to share their thoughts and experiences.\nUse surveys or direct conversations to gather insights.\nAnalyze this feedback to identify areas for improvement.\nImplementing changes based on customer input can enhance satisfaction.\nHappy customers are more likely to return and refer others.\nBest regards,\nKory IconfoundWMG",
+    "Hi Nancy Sanchez,\nI wanted to share some insights on effective communication in the workplace.\nEncouraging open dialogue can foster a positive culture.\nConsider implementing regular feedback sessions to address concerns.\nThis can help build trust and improve team dynamics.\nAdditionally, using clear and concise language can prevent misunderstandings.\nI hope you find these tips helpful for your team.\n\nBest regards Kory IconfoundWMG",
+    "Hi Sallie Schmidt,\nI wanted to share some thoughts on team motivation.\nRecognizing your team's efforts can boost morale and productivity.\nConsider implementing a rewards program to celebrate achievements.\nEncouraging a positive work environment can lead to better collaboration.\nRegular team-building activities can strengthen relationships among team members.\nLet me know if you find these ideas useful.\n\nBest regards Kory IconfoundWMG"
   ],
   "greeting_samples": [
-    "Hi Cheryl Blair,",
-    "Hi Wyatt Lee,",
-    "Hi Bohdan,",
-    "Hi Russell Short,",
-    "Hi Nolan Sullivan,"
+    "Hi Lurline Kub,",
+    "Hi Finley Flores,",
+    "Hi Nancy Sanchez,",
+    "Hi Sallie Schmidt,",
+    "Hi Mykola Usatyi,"
   ],
-  "closing_counts": {
-    "Let's Win,": 4
-  },
-  "built_at_epoch": 1781737271.8329978,
-  "sample_count": 30
+  "closing_counts": {},
+  "built_at_epoch": 1784228882.505884,
+  "sample_count": 25
 }

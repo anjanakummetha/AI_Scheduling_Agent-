@@ -258,7 +258,7 @@ def run_scenario_b() -> int:
 
 
 def run_scenario_c(proposal_id: int | None = None) -> int:
-    """Mock Teams Approve → Composio calendar block (mocked) → status executed."""
+    """Mock Teams Approve → sends offer email; status offer_sent (invite is a second step)."""
     banner("SCENARIO C — MOCK TEAMS APPROVE → OUTLOOK HOLD")
     if proposal_id is None:
         proposal_id = run_scenario_a()
@@ -314,9 +314,8 @@ def run_scenario_c(proposal_id: int | None = None) -> int:
         print("[FAIL] execute_lexi_approval returned ok=False.")
         return 1
 
-    # Lexi uses status "executed" (semantically: scheduled/confirmed on calendar).
-    if result.status != "executed":
-        print(f"[FAIL] Expected status executed (scheduled), got {result.status}")
+    if result.status != "offer_sent":
+        print(f"[FAIL] Expected status offer_sent after Send offer, got {result.status}")
         return 1
 
     calendar_calls = [c for c in composio_calls if c.get("tool") == "create_calendar_event"]
@@ -331,10 +330,10 @@ def run_scenario_c(proposal_id: int | None = None) -> int:
             "SELECT status FROM proposals WHERE id = ?",
             (proposal_id,),
         ).fetchone()
-        if row is None or row["status"] != "executed":
-            print(f"[FAIL] DB status not executed (got {row['status'] if row else None})")
+        if row is None or row["status"] != "offer_sent":
+            print(f"[FAIL] DB status not offer_sent (got {row['status'] if row else None})")
             return 1
-        trace("DB", f"proposal_id={proposal_id} final_status=executed (scheduled)")
+        trace("DB", f"proposal_id={proposal_id} final_status=offer_sent")
     finally:
         conn.close()
 

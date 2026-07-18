@@ -27,6 +27,40 @@ def _ingress_status() -> dict[str, Any]:
     return status
 
 
+_KORY_TZ_LABELS = {
+    "America/Denver": "Mountain Time (MT)",
+    "America/Los_Angeles": "Pacific Time (PT)",
+    "America/Chicago": "Central Time (CT)",
+    "America/New_York": "Eastern Time (ET)",
+}
+
+
+def _kory_home_timezone_label() -> str:
+    return _KORY_TZ_LABELS.get(settings.scheduling_timezone, settings.scheduling_timezone)
+
+
+def format_kory_status_brief(status: dict[str, Any]) -> str:
+    """2–4 lines for Teams chat — no connection IDs or API internals."""
+    dry = bool(status.get("lexi_dry_run"))
+    mode = "test mode (no live sends)" if dry else "live"
+    ingress = status.get("ingress") or {}
+    worker = bool(status.get("worker_running") or ingress.get("worker_running"))
+    pending = int(status.get("pending_approval_count") or 0)
+
+    lines = [f"Lexi is running ({mode}). Inbox worker: {'on' if worker else 'off'}."]
+    if pending > 0:
+        lines.append(f"{pending} draft{'s' if pending != 1 else ''} waiting for your Send.")
+    else:
+        lines.append("No drafts waiting.")
+    lines.append(
+        f"Your home timezone is {_kory_home_timezone_label()} — you travel; "
+        "outbound emails show the other person's time first."
+    )
+    if not status.get("teams_cards_ready", True):
+        lines.append("Teams cards aren't configured yet.")
+    return "\n".join(lines)
+
+
 def get_lexi_system_status() -> dict[str, Any]:
     """Runtime flags for Hermes to explain dry-run vs live Outlook."""
     pending_count = 0
@@ -45,8 +79,15 @@ def get_lexi_system_status() -> dict[str, Any]:
 
     safety = read_only_safety_snapshot()
     teams_ref = load_conversation_reference()
-    return {
+    ingress = _ingress_status()
+    payload = {
         "lexi_dry_run": settings.lexi_dry_run,
+        "lexi_suppress_teams_push": settings.lexi_suppress_teams_push,
+        "staging_mode": (
+            "dry_run"
+            if settings.lexi_dry_run
+            else ("teams_suppressed" if settings.lexi_suppress_teams_push else "live")
+        ),
         "lexi_write_mode": settings.lexi_write_mode,
         "demo_mode": settings.demo_mode,
         "read_connection": settings.kory_composio_connection_id,
@@ -60,6 +101,8 @@ def get_lexi_system_status() -> dict[str, Any]:
         "asana_enabled": settings.asana_enabled,
         "asana_connection": settings.asana_composio_connection_id,
         "asana_project_gid_set": bool(settings.asana_project_gid),
+        "hubspot_connection": settings.hubspot_composio_connection_id,
+        "hubspot_configured": bool(settings.hubspot_composio_connection_id),
         "lexi_teams_enabled": settings.lexi_teams_enabled,
         "lexi_teams_text_only": settings.lexi_teams_text_only,
         "teams_cards_ready": teams_delivery_ready(),
@@ -70,21 +113,22 @@ def get_lexi_system_status() -> dict[str, Any]:
         "lexi_composio_search_enabled": settings.lexi_composio_search_enabled,
         "composio_configured": bool(settings.composio_api_key and settings.kory_composio_connection_id),
         "pending_approval_count": pending_count,
+        "kory_home_timezone": settings.scheduling_timezone,
+        "kory_home_timezone_label": _kory_home_timezone_label(),
         "scheduling_timezone": settings.scheduling_timezone,
         "outlook_timezone": settings.outlook_timezone,
         "llm_model": settings.llm_model,
         "learning_summary": recent_feedback_summary(limit=5) or None,
         "safety": safety,
-        "ingress": _ingress_status(),
+        "ingress": ingress,
         "note": (
-            "Production: lexi@ + kory@ifg.vc sends and calendar writes enabled; "
-            "all external impact needs Teams approval. "
-            f"Composio Search: {'on' if settings.lexi_composio_search_enabled else 'off'}. "
-            "Teams inbound notify: "
-            f"{settings.lexi_teams_inbound_notify_mode}. "
-            "Delegation auto-draft when Kory CCs Lexi."
+            "Internal: outlook_timezone is API parsing only — Kory's home TZ is scheduling_timezone. "
+            "Quote kory_brief to Kory; do not dump this object."
         ),
     }
+    payload["kory_brief"] = format_kory_status_brief({**payload, "worker_running": ingress.get("worker_running")})
+    payload["kory_chat"] = "Reply to Kory using kory_brief only — 2–4 short lines, no tables or connection IDs."
+    return payload
 
 
 def get_calendar_availability(*, days: int = 0) -> dict[str, Any]:
@@ -106,26 +150,66 @@ def get_calendar_availability(*, days: int = 0) -> dict[str, Any]:
         family_note = family["hint"]
     else:
         family_note = f"Family Do Not Move blocks in window: {family_count}"
-    unavailable = context.get("calendars_unavailable") or []
     return {
         "window_days": context.get("horizon_days", window_days),
         "calendar_status": context.get("status"),
-        "calendars_consulted": consulted,
-        "calendars_resolved": resolved_names,
-        "calendars_unavailable": unavailable,
+        "calendars_consulted": resolved_names,
         "busy_summary": context.get("busy_summary"),
         "family_calendar": family,
         "family_blocks_in_window": family_count,
         "busy_event_count": len(busy),
-        "busy_events": busy[:120],
+        "busy_events": busy[:80],
         "range_start": context.get("range_start"),
         "range_end": context.get("range_end"),
         "scheduling_timezone": settings.scheduling_timezone,
-        "hint": (
-            "Busy/free merges work Calendar + Master (kid-only / duplicate copies filtered), "
-            "plus family Do Not Move when configured. "
-            "Writes: business → Calendar, personal Kory → Master. "
-            f"{family_note}"
+        "kory_chat": (
+            "Summarize for Kory in 1–2 plain sentences (e.g. 'You're full next week' or "
+            "'Tuesday afternoon is open'). Do not mention calendars, APIs, or tool output. "
+            "For a day-by-day week summary, call lexi_summarize_calendar_window instead."
+        ),
+    }
+
+
+def summarize_calendar_window(*, query: str) -> dict[str, Any]:
+    """Read-only day-by-day calendar summary for chat (Master + work Calendar merge)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.scheduling.calendar_context import load_scheduling_calendar_context
+    from app.scheduling.calendar_summary import build_calendar_window_summary, infer_summary_window
+
+    mt = ZoneInfo(settings.scheduling_timezone)
+    text = query.strip()
+    if not text:
+        return {"ok": False, "error": "query is required (e.g. 'summarize my calendar for next week')."}
+
+    window = infer_summary_window(query=text)
+    if not window:
+        return {
+            "ok": False,
+            "error": (
+                "Could not infer a date window. Include e.g. 'next week', 'this week', "
+                "or 'July 6 through July 12'."
+            ),
+        }
+
+    today = datetime.now(tz=mt).date()
+    horizon_days = max(7, (window.end - today).days + 2)
+    context = load_scheduling_calendar_context(subject="", body=text, horizon_days=horizon_days)
+    if context.get("status") != "available":
+        detail = context.get("error") or context.get("source") or "unavailable"
+        return {"ok": False, "error": f"Calendar unavailable: {detail}"}
+
+    busy = context.get("busy_events") or []
+    summary = build_calendar_window_summary(busy_events=busy, window=window)
+    return {
+        "ok": True,
+        **summary,
+        "busy_event_count_in_window": summary["total_events"],
+        "kory_chat": (
+            "Reply using formatted_summary exactly for dates and events. "
+            "You may tighten wording slightly but do NOT invent, omit, or shift events. "
+            "Do NOT mention Composio, group calendars, Master rollup, or API visibility."
         ),
     }
 
@@ -215,13 +299,7 @@ def place_calendar_hold(
             }
 
     try:
-        hold = place_tentative_hold(
-            title=subject,
-            start_iso=action["start"],
-            end_iso=action["end"],
-            notes=body_note,
-            calendar_name=cal or None,
-        )
+        hold = place_tentative_hold(action=action, calendar_name=cal or None)
         if not hold.get("ok"):
             return hold
         event_id = hold.get("event_id")
@@ -254,16 +332,31 @@ def place_calendar_hold(
         }
 
 
+def infer_outbound_send_channel(body: str, *, explicit: str = "") -> str:
+    """Pick kory vs lexi mailbox for chat-initiated outbound mail."""
+    from app.integrations.outlook_email import infer_outbound_send_channel as _infer
+
+    return _infer(body, explicit=explicit)
+
+
 def draft_outbound_email_preview(
     *,
     to_email: str,
     subject: str,
     body: str,
+    send_channel: str = "",
 ) -> dict[str, Any]:
     """Return an outbound email preview without sending (Hermes drafts the body in chat)."""
     recipient = to_email.strip().lower()
     if not recipient or "@" not in recipient:
         return {"ok": False, "error": "to_email must be a valid email address."}
+
+    channel = infer_outbound_send_channel(body, explicit=send_channel)
+    from_addr = (
+        (settings.kory_sender_emails[0] if settings.kory_sender_emails else "kory@ifg.vc")
+        if channel == "kory"
+        else (settings.lexi_mailbox_email or "lexi@iconicfounders.com")
+    )
 
     return {
         "ok": True,
@@ -271,10 +364,12 @@ def draft_outbound_email_preview(
         "to": recipient,
         "subject": subject.strip() or "(no subject)",
         "body": body.strip(),
+        "send_channel": channel,
+        "from_mailbox": from_addr,
         "dry_run": settings.lexi_dry_run,
         "next_step": (
             "Show this preview to Kory. After explicit approval, call "
-            "lexi_send_outbound_email with confirm_send=true."
+            f"lexi_send_outbound_email with confirm_send=true and send_channel={channel}."
         ),
     }
 
@@ -303,9 +398,9 @@ def send_outbound_email_confirmed(
         return {"ok": False, "error": "to_email must be a valid email address."}
 
     try:
-        channel = (send_channel or settings.lexi_default_send_channel or "lexi").strip().lower()
-        if channel not in {"kory", "lexi"}:
-            channel = "lexi"
+        from app.integrations.outlook_email import infer_outbound_send_channel
+
+        channel = infer_outbound_send_channel(body, explicit=send_channel or "")
         message_id, log_id = send_outbound_email(
             to_email=recipient,
             subject=subject.strip(),
@@ -436,14 +531,86 @@ def upsert_scheduling_session(
     return {"ok": True, "session": session}
 
 
+def find_slots_for_request(
+    *,
+    subject: str = "",
+    body: str = "",
+    intent: str = "",
+    meeting_format: str = "",
+    sender_email: str = "",
+) -> dict[str, Any]:
+    """Chat-safe slot search — unified schedule_from_context (same path as inbound email)."""
+    from app.scheduling.schedule_from_context import schedule_from_context
+
+    subj = subject.strip()
+    text = body.strip()
+    if not subj and not text:
+        return {"ok": False, "error": "subject or body is required (include window e.g. 'next week')."}
+
+    result = schedule_from_context(
+        subject=subj,
+        body=text,
+        intent=intent.strip() or None,
+        sender_email=sender_email.strip() or None,
+        meeting_format=meeting_format.strip() or None,
+    )
+    payload = result.to_dict()
+    payload["kory_chat"] = (
+        "Reply with formatted_slots only — these are calendar-verified. "
+        "Never invent or adjust times in chat. If insufficient_slots, say so in one sentence."
+    )
+    return payload
+
+
+def validate_scheduling_cases_action(
+    *,
+    cases: list[dict[str, Any]] | None = None,
+    preset: str = "",
+) -> dict[str, Any]:
+    """Batch-validate slots against live calendar + rules; returns formatted_summary."""
+    from app.scheduling.slot_validation import validate_scheduling_cases
+
+    return validate_scheduling_cases(cases=cases, preset=preset)
+
+
 def validate_slots_preview(
     slots: list[dict[str, str]],
     intent: str = "",
 ) -> dict[str, Any]:
-    from app.rules.validators import validate_proposal_slots
+    from datetime import datetime, timezone
 
-    result = validate_proposal_slots(slots, intent=intent or None)
-    return {"ok": result.valid, **result.to_dict()}
+    from app.rules.validators import validate_proposal_slots
+    from app.scheduling.calendar_context import load_scheduling_calendar_context
+
+    horizon_days = 14
+    latest_end: datetime | None = None
+    for slot in slots:
+        raw_end = str(slot.get("end") or "")
+        if not raw_end:
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw_end.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        if latest_end is None or parsed > latest_end:
+            latest_end = parsed
+    if latest_end is not None:
+        now_utc = datetime.now(timezone.utc)
+        horizon_days = max(7, min(settings.lexi_calendar_search_days_max, (latest_end - now_utc).days + 3))
+
+    calendar_context = load_scheduling_calendar_context(horizon_days=horizon_days)
+    busy_events = calendar_context.get("busy_events") or []
+    result = validate_proposal_slots(slots, intent=intent or None, busy_events=busy_events)
+    return {
+        "ok": result.valid,
+        **result.to_dict(),
+        "calendar_status": calendar_context.get("status"),
+        "busy_event_count": len(busy_events),
+    }
 
 
 def get_inbound_reply_queue_action() -> dict[str, Any]:
@@ -453,10 +620,72 @@ def get_inbound_reply_queue_action() -> dict[str, Any]:
     return {"ok": True, "count": len(items), "queue": items}
 
 
+def begin_reoffer_action(*, proposal_id: int) -> dict[str, Any]:
+    from app.agents.inbound_reply import begin_reoffer_schedule
+
+    return begin_reoffer_schedule(proposal_id)
+
+
+def recipient_timezone_action(
+    *,
+    sender_email: str = "",
+    body: str = "",
+) -> dict[str, Any]:
+    from app.scheduling.timezone_intel import detect_recipient_timezone
+
+    result = detect_recipient_timezone(sender_email=sender_email or None, body=body)
+    return {
+        "ok": True,
+        "timezone": result.tz_name(),
+        "confidence": result.confidence,
+        "source": result.source,
+        "label": result.label(),
+        "detail": result.detail,
+    }
+
+
+def get_scheduling_context_action(*, proposal_id: int) -> dict[str, Any]:
+    from app.scheduling.hermes_compose import get_scheduling_context_for_proposal
+
+    return get_scheduling_context_for_proposal(proposal_id)
+
+
+def inbox_review_action(*, hours: int = 48) -> dict[str, Any]:
+    from app.assistant.inbox_review import build_inbox_review
+
+    return build_inbox_review(hours=hours)
+
+
+def escalate_to_heidi_action(*, proposal_id: int, reason: str = "") -> dict[str, Any]:
+    from app.scheduling.heidi_escalation import escalate_to_heidi
+
+    return escalate_to_heidi(proposal_id, reason=reason)
+
+
 def begin_draft_reply_action(*, proposal_id: int, voice_mode: str = "") -> dict[str, Any]:
     from app.agents.inbound_reply import begin_draft_reply
 
     return begin_draft_reply(proposal_id, voice_mode=voice_mode)
+
+
+def draft_reply_for_subject_action(
+    *,
+    subject_contains: str,
+    voice_mode: str = "kory",
+) -> dict[str, Any]:
+    from app.agents.inbound_reply import draft_reply_for_subject
+
+    return draft_reply_for_subject(subject_contains, voice_mode=voice_mode or "kory")
+
+
+def retry_scheduling_with_guidance_action(
+    *,
+    proposal_id: int,
+    guidance: str,
+) -> dict[str, Any]:
+    from app.agents.inbound_reply import retry_scheduling_with_guidance
+
+    return retry_scheduling_with_guidance(proposal_id, guidance)
 
 
 def decline_inbound_reply_action(*, proposal_id: int, reason: str = "") -> dict[str, Any]:
@@ -615,6 +844,261 @@ def list_kory_memory_action() -> dict[str, Any]:
 
     facts = list_facts(limit=50)
     return {"ok": True, "count": len(facts), "facts": facts}
+
+
+def unanswered_brief_action(*, hours: int = 72) -> dict[str, Any]:
+    from app.assistant.briefings import build_unanswered_brief
+
+    return build_unanswered_brief(hours=hours)
+
+
+def today_calendar_brief_action() -> dict[str, Any]:
+    from app.assistant.briefings import build_today_calendar_brief
+
+    return build_today_calendar_brief()
+
+
+def prebrief_action(*, include_research: bool = False) -> dict[str, Any]:
+    from app.assistant.briefings import build_prebriefs_for_today
+
+    return build_prebriefs_for_today(include_research=include_research)
+
+
+def daily_ceo_briefing_action() -> dict[str, Any]:
+    from app.assistant.briefings import build_daily_ceo_briefing
+
+    return build_daily_ceo_briefing()
+
+
+def list_asana_tasks_action(*, bucket: str = "all") -> dict[str, Any]:
+    from app.integrations.asana_manager import list_asana_tasks
+
+    allowed = {"overdue", "due_today", "upcoming", "all"}
+    key = bucket if bucket in allowed else "all"
+    return list_asana_tasks(bucket=key)  # type: ignore[arg-type]
+
+
+def create_asana_task_action(*, title: str, notes: str = "", due_on: str = "", confirm: bool = False) -> dict[str, Any]:
+    from app.integrations.asana_manager import create_asana_task_from_chat
+
+    return create_asana_task_from_chat(title=title, notes=notes, due_on=due_on, approved=confirm)
+
+
+def complete_asana_task_action(*, task_gid: str, confirm: bool = False) -> dict[str, Any]:
+    from app.integrations.asana_manager import complete_asana_task
+
+    return complete_asana_task(task_gid=task_gid, approved=confirm)
+
+
+def update_asana_task_action(
+    *,
+    task_gid: str,
+    title: str = "",
+    notes: str = "",
+    due_on: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    from app.integrations.asana_manager import update_asana_task
+
+    return update_asana_task(
+        task_gid=task_gid,
+        title=title,
+        notes=notes,
+        due_on=due_on,
+        approved=confirm,
+    )
+
+
+def delete_asana_task_action(*, task_gid: str, confirm: bool = False) -> dict[str, Any]:
+    from app.integrations.asana_manager import delete_asana_task
+
+    return delete_asana_task(task_gid=task_gid, approved=confirm)
+
+
+def search_asana_tasks_action(*, query: str) -> dict[str, Any]:
+    from app.integrations.asana_manager import search_asana_tasks
+
+    return search_asana_tasks(query=query)
+
+
+def move_asana_task_action(
+    *,
+    task_gid: str,
+    section_gid: str = "",
+    section_name: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    from app.integrations.asana_manager import move_asana_task_to_section
+
+    return move_asana_task_to_section(
+        task_gid=task_gid,
+        section_gid=section_gid,
+        section_name=section_name,
+        approved=confirm,
+    )
+
+
+def comment_asana_task_action(*, task_gid: str, comment: str, confirm: bool = False) -> dict[str, Any]:
+    from app.integrations.asana_manager import comment_on_asana_task
+
+    return comment_on_asana_task(task_gid=task_gid, comment=comment, approved=confirm)
+
+
+def hubspot_status_action() -> dict[str, Any]:
+    from app.integrations.hubspot_manager import hubspot_status_brief
+
+    return hubspot_status_brief()
+
+
+def hubspot_cleanup_proposals_action(*, inactive_days: int = 180) -> dict[str, Any]:
+    from app.integrations.hubspot_manager import propose_inactive_cleanup
+
+    return propose_inactive_cleanup(inactive_days=inactive_days)
+
+
+def hubspot_outreach_batch_action(*, goal: str = "", limit: int = 10) -> dict[str, Any]:
+    from app.integrations.hubspot_manager import propose_outreach_batch
+
+    return propose_outreach_batch(goal=goal, limit=limit)
+
+
+def hubspot_duplicate_merges_action(*, limit: int = 50) -> dict[str, Any]:
+    from app.integrations.hubspot_manager import propose_duplicate_merges
+
+    return propose_duplicate_merges(limit=limit)
+
+
+def hubspot_lead_source_fills_action(*, limit: int = 25) -> dict[str, Any]:
+    from app.integrations.hubspot_manager import propose_lead_source_fills
+
+    return propose_lead_source_fills(limit=limit)
+
+
+def hubspot_prebrief_enrich_action(*, email: str = "", name: str = "") -> dict[str, Any]:
+    from app.integrations.hubspot_manager import enrich_prebrief_from_hubspot
+
+    return enrich_prebrief_from_hubspot(email=email, name=name)
+
+
+def hubspot_meeting_note_action(
+    *,
+    email: str,
+    note: str,
+    meeting_subject: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    from app.integrations.hubspot_manager import stage_meeting_note
+
+    return stage_meeting_note(
+        email=email,
+        note=note,
+        meeting_subject=meeting_subject,
+        approved=confirm,
+    )
+
+
+def hubspot_outreach_candidates_action(
+    *,
+    goal: str = "",
+    lifecycle: str = "",
+    limit: int = 15,
+) -> dict[str, Any]:
+    from app.integrations.hubspot_manager import find_contacts_for_outreach
+
+    return find_contacts_for_outreach(goal=goal, lifecycle=lifecycle, limit=limit)
+
+
+def hubspot_deals_snapshot_action(*, limit: int = 8) -> dict[str, Any]:
+    from app.integrations.hubspot_manager import deals_snapshot_for_brief
+
+    return deals_snapshot_for_brief(limit=limit)
+
+
+# ── Outreach campaigns (draft locally; no send / no Teams cards) ─────────────
+
+
+def create_outreach_campaign_action(
+    *,
+    name: str,
+    goal: str = "",
+    template_key: str = "generic",
+    pasted_list: str = "",
+    hubspot_limit: int = 0,
+    hubspot_lifecycle: str = "",
+    include_research: bool = False,
+    custom_opener: str = "",
+    custom_subject: str = "",
+) -> dict[str, Any]:
+    from app.scheduling.outreach_campaign import create_outreach_campaign
+
+    return create_outreach_campaign(
+        name=name,
+        goal=goal,
+        template_key=template_key,
+        pasted_list=pasted_list,
+        hubspot_limit=hubspot_limit,
+        hubspot_lifecycle=hubspot_lifecycle,
+        include_research=include_research,
+        custom_opener=custom_opener,
+        custom_subject=custom_subject,
+    )
+
+
+def list_outreach_campaigns_action(*, limit: int = 20) -> dict[str, Any]:
+    from app.scheduling.outreach_campaign import list_campaigns
+
+    return list_campaigns(limit=limit)
+
+
+def get_outreach_campaign_action(*, campaign_id: str) -> dict[str, Any]:
+    from app.scheduling.outreach_campaign import get_campaign
+
+    detail = get_campaign(campaign_id)
+    if not detail:
+        return {"ok": False, "error": f"Unknown campaign {campaign_id}"}
+    camp = detail["campaign"]
+    drafts = detail["drafts"]
+    lines = [
+        f"**Campaign** `{camp.get('campaign_id')}` — {camp.get('name')}",
+        f"Status: {camp.get('status')} · Template: {camp.get('template_key')}",
+        f"Drafts: {len(drafts)} · Sends blocked: {detail.get('sends_blocked')}",
+        "",
+    ]
+    for d in drafts[:15]:
+        lines.append(
+            f"• {d.get('recipient_name')} <{d.get('recipient_email')}> — {d.get('subject')} "
+            f"[{d.get('status')}]"
+        )
+    if len(drafts) > 15:
+        lines.append(f"…and {len(drafts) - 15} more")
+    return {
+        "ok": True,
+        **detail,
+        "kory_message": "\n".join(lines),
+    }
+
+
+def approve_outreach_campaign_action(*, campaign_id: str, confirm: bool = False) -> dict[str, Any]:
+    from app.scheduling.outreach_campaign import approve_outreach_campaign
+
+    if not confirm:
+        return {
+            "ok": False,
+            "error": "Set confirm=true to mark the campaign approved (still will not send).",
+        }
+    return approve_outreach_campaign(campaign_id=campaign_id, approved_by="kory")
+
+
+def send_outreach_campaign_action(*, campaign_id: str, confirm: bool = False) -> dict[str, Any]:
+    from app.scheduling.outreach_campaign import send_outreach_campaign
+
+    return send_outreach_campaign(campaign_id=campaign_id, approved=confirm)
+
+
+def remove_outreach_recipient_action(*, campaign_id: str, email: str) -> dict[str, Any]:
+    from app.scheduling.outreach_campaign import remove_outreach_recipient
+
+    return remove_outreach_recipient(campaign_id=campaign_id, email=email)
 
 
 # ── Composio Search (web, travel, maps — read-only) ──────────────────────────

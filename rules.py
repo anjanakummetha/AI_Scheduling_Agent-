@@ -136,7 +136,7 @@ MEETING_TYPES = {
     "coffee": {
         "label": "Coffee Meeting",
         "duration_minutes": 60,
-        "calendar_block_minutes": 90,  # 60 min meeting + 30 min buffer
+        "calendar_block_minutes": 90,  # scheduling reserve: 60 min meeting + 30 min post-buffer
         "preferred_times": ["08:30", "09:00"],
         "locations": ["Olive & Finch", "Aviano on St. Paul", "Aviano on Detroit"],
         "location_area": "Cherry Creek only (unless important client requests elsewhere — Kory will advise)",
@@ -181,7 +181,9 @@ MEETING_TYPES = {
     },
     "podcast": {
         "label": "The Turn Podcast Recording",
-        "scheduling": "Ad hoc — no fixed cadence. 6-7 episodes in backlog, no rush.",
+        "duration_minutes": 30,
+        "format": "virtual",
+        "scheduling": "Ad hoc — no fixed cadence. Opportunistic booking.",
     },
 }
 

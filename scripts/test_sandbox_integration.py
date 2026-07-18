@@ -34,9 +34,14 @@ def main() -> int:
     slot_start = (start + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
     slot_end = slot_start + timedelta(hours=1)
     hold = place_tentative_hold(
-        title="Lexi integration test hold",
-        start_iso=slot_start.isoformat(),
-        end_iso=slot_end.isoformat(),
+        action={
+            "title": "Lexi integration test hold",
+            "start": slot_start.isoformat(),
+            "end": slot_end.isoformat(),
+            "attendees": [],
+            "body": "Integration test",
+            "is_online_meeting": False,
+        },
     )
     print(f"[{'ok' if hold.get('ok') else 'FAIL'}] Sandbox hold: {hold}")
 

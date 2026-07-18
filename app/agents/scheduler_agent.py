@@ -12,9 +12,6 @@ import traceback
 from typing import Any
 
 from app.config import settings
-from app.integrations.hold_placement import place_offered_holds
-from app.scheduling.calendar_intelligence import resolve_write_calendar_name
-from app.rules.validators import filter_slots_by_rules
 from app.llm.hermes_client import get_hermes_client
 from app.storage.lexi_db import get_lexi_connection
 
@@ -72,6 +69,15 @@ class PendingProposal:
     raw_body: str | None
     voice_mode: str = "kory"
     send_channel: str = "kory"
+    recipient_timezone: str | None = None
+    kory_scheduling_guidance: str | None = None
+
+    def scheduling_body(self) -> str:
+        base = (self.raw_body or "").strip()
+        guidance = (self.kory_scheduling_guidance or "").strip()
+        if guidance:
+            return f"{base}\n\nKory (scheduling guidance): {guidance}".strip()
+        return base
 
 
 @dataclass
@@ -80,6 +86,10 @@ class ScheduleResult:
     drafted_reply: str
     confidence_score: float
     source: str = "llm"
+    scheduling_note: str = ""
+    kory_message: str = ""
+    suggested_guidance: str | None = None
+    window_expanded: bool = False
 
 
 def process_proposal_schedule(proposal_id: int) -> bool:
@@ -92,7 +102,7 @@ def process_proposal_schedule(proposal_id: int) -> bool:
             "SELECT status FROM proposals WHERE id = ?",
             (proposal_id,),
         ).fetchone()
-        if status_row and status_row["status"] == "awaiting_reply_prompt":
+        if status_row and status_row["status"] in {"awaiting_reply_prompt", "pending_reoffer"}:
             conn.execute(
                 "UPDATE proposals SET status = ?, updated_at = datetime('now') WHERE id = ?",
                 (PENDING_TRIAGE, proposal_id),
@@ -118,13 +128,19 @@ def process_pending_schedules() -> list[int]:
 
 
 def _advance_proposal(conn: sqlite3.Connection, proposal: PendingProposal) -> bool:
+    from app.rules.validators import filter_slots_by_rules
+    from app.scheduling.meeting_type import normalize_scheduling_intent
+    from app.scheduling.pre_approval_gate import verify_before_kory_approval
+    from app.scheduling.scheduling_plan import build_scheduling_plan
+    from app.scheduling.slot_engine import infer_meeting_format
+
     started = time.perf_counter()
     savepoint = f"proposal_{proposal.proposal_id}"
     conn.execute(f"SAVEPOINT {savepoint}")
     try:
         calendar_context = _load_calendar_context(
             subject=proposal.subject or "",
-            body=proposal.raw_body or "",
+            body=proposal.scheduling_body(),
         )
         if calendar_context.get("status") != "available":
             raise RuntimeError(
@@ -136,9 +152,21 @@ def _advance_proposal(conn: sqlite3.Connection, proposal: PendingProposal) -> bo
             schedule.slots,
             calendar_context,
         )
+        type_key = normalize_scheduling_intent(
+            proposal.intent_classification,
+            subject=proposal.subject or "",
+            body=proposal.scheduling_body(),
+        )
+        meeting_format = infer_meeting_format(
+            type_key,
+            subject=proposal.subject or "",
+            body=proposal.scheduling_body(),
+        )
         schedule.slots, rule_validation = filter_slots_by_rules(
             schedule.slots,
-            intent=proposal.intent_classification,
+            intent=type_key,
+            meeting_format=meeting_format,
+            busy_events=calendar_context.get("busy_events"),
         )
         if len(schedule.slots) < MIN_SLOT_OPTIONS:
             raise ValueError(
@@ -146,37 +174,50 @@ def _advance_proposal(conn: sqlite3.Connection, proposal: PendingProposal) -> bo
                 f"rules: {rule_validation.violations}"
             )
 
-        hold_count = place_offered_holds(
-            conn,
-            proposal_id=proposal.proposal_id,
-            slots=schedule.slots,
-            intent_classification=proposal.intent_classification,
-            meeting_subject=proposal.subject,
-            calendar_name=resolve_write_calendar_name(intent=proposal.intent_classification),
+        plan = build_scheduling_plan(
+            subject=proposal.subject or "",
+            body=proposal.scheduling_body(),
+            intent=proposal.intent_classification,
+            use_llm=bool(settings.llm_api_key),
         )
+        gate = verify_before_kory_approval(
+            slots=schedule.slots,
+            calendar_context=calendar_context,
+            plan=plan,
+            intent=proposal.intent_classification,
+            subject=proposal.subject or "",
+            body=proposal.scheduling_body(),
+            meeting_format=meeting_format,
+            window_expanded=schedule.window_expanded,
+        )
+        if not gate.ok:
+            raise ValueError(f"Pre-approval gate failed: {gate.summary()}")
+
+        resolved_tz = _resolve_recipient_timezone(proposal)
         _update_proposal_for_approval(
             conn,
             proposal.proposal_id,
             schedule,
             voice_mode=proposal.voice_mode,
+            recipient_timezone=resolved_tz,
         )
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         _insert_audit_log(
             conn,
-            step_name="hold_placement",
+            step_name="scheduler_engine",
             reference_id=str(proposal.proposal_id),
             log_level="INFO",
-            message=f"Placed {hold_count} calendar hold(s) and advanced proposal to pending_approval.",
+            message="Proposed slots and draft; awaiting Kory approval (holds placed after send).",
             payload={
                 "proposal_id": proposal.proposal_id,
                 "thread_id": proposal.thread_id,
-                "hold_count": hold_count,
                 "slot_count": len(schedule.slots),
                 "duration_ms": duration_ms,
                 "schedule_source": schedule.source,
                 "calendar_status": calendar_context.get("status"),
                 "confidence_score": schedule.confidence_score,
                 "rule_validation": rule_validation.to_dict(),
+                "recipient_timezone": proposal.recipient_timezone,
             },
         )
         conn.execute(f"RELEASE SAVEPOINT {savepoint}")
@@ -218,6 +259,10 @@ def _proposal_from_row(row: sqlite3.Row) -> PendingProposal:
         raw_body=row["raw_body"],
         voice_mode=str(row["voice_mode"] or "kory"),
         send_channel=str(row["send_channel"] or "kory"),
+        recipient_timezone=row["recipient_timezone"] if "recipient_timezone" in row.keys() else None,
+        kory_scheduling_guidance=(
+            row["kory_scheduling_guidance"] if "kory_scheduling_guidance" in row.keys() else None
+        ),
     )
 
 
@@ -232,6 +277,8 @@ _PROPOSAL_SELECT = """
         p.rule_reasoning,
         p.voice_mode,
         p.send_channel,
+        p.kory_scheduling_guidance,
+        COALESCE(p.recipient_timezone, e.recipient_timezone) AS recipient_timezone,
         e.subject,
         e.sender,
         e.received_at,
@@ -289,21 +336,80 @@ def _build_schedule(
     proposal: PendingProposal,
     calendar_context: dict[str, Any],
 ) -> ScheduleResult:
-    try:
-        return _call_llm_scheduler(proposal, calendar_context)
-    except Exception as llm_exc:
-        if calendar_context.get("status") != "available":
-            raise RuntimeError(
-                "LLM scheduling failed and live calendar is unavailable."
-            ) from llm_exc
-        return _fallback_schedule_from_engine(proposal, calendar_context, llm_exc)
+    from app.scheduling.reply_composer import compose_scheduling_reply
+    from app.scheduling.schedule_from_context import schedule_from_context
+
+    result = schedule_from_context(
+        subject=proposal.subject or "",
+        body=proposal.raw_body or "",
+        intent=proposal.intent_classification,
+        sender_email=proposal.sender,
+        kory_scheduling_guidance=proposal.kory_scheduling_guidance or "",
+        stored_recipient_timezone=proposal.recipient_timezone,
+        try_inbound_availability=True,
+        format_slots=False,
+        calendar_context=calendar_context,
+    )
+
+    if result.path == "plan_non_scheduling":
+        from app.scheduling.scheduling_plan import build_scheduling_plan
+
+        plan = result.plan or build_scheduling_plan(
+            subject=proposal.subject or "",
+            body=proposal.scheduling_body(),
+            intent=proposal.intent_classification,
+        )
+        return ScheduleResult(
+            slots=[],
+            drafted_reply=_general_reply_placeholder(proposal, plan),
+            confidence_score=0.5,
+            source="plan_non_scheduling",
+        )
+
+    if not result.ok:
+        raise ValueError(result.failure_message or f"Scheduling failed: {result.status}")
+
+    slots = result.slots
+    window_expanded = bool(result.diagnostics.get("window_expanded")) or bool(
+        result.diagnostics.get("morning_preference_relaxed")
+    )
+    if result.plan and result.plan.window and slots and not window_expanded:
+        from app.scheduling.scheduling_window import slot_date_in_window
+
+        if any(not slot_date_in_window(slot, result.plan.window) for slot in slots):
+            window_expanded = True
+    draft, draft_source = compose_scheduling_reply(
+        proposal_sender=proposal.sender,
+        proposal_subject=proposal.subject or "",
+        proposal_body=proposal.raw_body or "",
+        thread_id=proposal.thread_id,
+        slots=slots,
+        voice_mode=proposal.voice_mode,
+        stored_recipient_timezone=proposal.recipient_timezone or result.recipient_timezone,
+        plan=result.plan,
+        intent=proposal.intent_classification,
+    )
+    source_label = result.path
+    if draft_source:
+        source_label = f"{result.path}+{draft_source}"
+    return ScheduleResult(
+        slots=slots,
+        drafted_reply=draft,
+        confidence_score=0.92,
+        source=source_label,
+        window_expanded=window_expanded,
+    )
 
 
 def _scheduler_system_prompt(*, recipient_email: str | None = None, voice_mode: str = "kory") -> str:
     from app.llm.kory_voice import voice_prompt_block
     from app.scheduling.lexi_voice import normalize_voice_mode, voice_instruction_for_mode
+    from app.storage.kory_memory import facts_prompt_block
 
     base = SCHEDULER_SYSTEM_PROMPT + "\n\n" + voice_prompt_block(recipient_email=recipient_email)
+    memory = facts_prompt_block()
+    if memory:
+        base += "\n\n" + memory
     mode = normalize_voice_mode(voice_mode)
     if mode == "lexi":
         base += "\n\n" + voice_instruction_for_mode("lexi")
@@ -380,12 +486,22 @@ def _fallback_schedule_from_engine(
             break
 
     slots = _filter_non_conflicting_slots(slots, calendar_context)[:MAX_SLOT_OPTIONS]
-    drafted_reply = _template_reply(proposal, slots)
+    from app.scheduling.reply_composer import compose_scheduling_reply
+
+    draft, draft_source = compose_scheduling_reply(
+        proposal_sender=proposal.sender,
+        proposal_subject=proposal.subject or "",
+        proposal_body=proposal.raw_body or "",
+        thread_id=proposal.thread_id,
+        slots=slots,
+        voice_mode=proposal.voice_mode,
+        stored_recipient_timezone=proposal.recipient_timezone,
+    )
     return ScheduleResult(
         slots=slots,
-        drafted_reply=drafted_reply,
+        drafted_reply=draft,
         confidence_score=0.35,
-        source=f"engine_fallback ({type(llm_exc).__name__})",
+        source=f"engine_fallback+{draft_source}",
     )
 
 
@@ -439,13 +555,15 @@ def _filter_non_conflicting_slots(
     slots: list[dict[str, str]],
     calendar_context: dict[str, Any],
 ) -> list[dict[str, str]]:
+    from app.scheduling.busy_intervals import slot_conflicts_busy
+
     busy_events = calendar_context.get("busy_events") or []
-    if calendar_context.get("status") != "available" or not busy_events:
-        return slots[:MAX_SLOT_OPTIONS]
+    if calendar_context.get("status") != "available":
+        return []
 
     safe: list[dict[str, str]] = []
     for slot in slots:
-        if not _slot_conflicts_busy(slot, busy_events):
+        if not slot_conflicts_busy(slot, busy_events):
             safe.append(slot)
     return safe
 
@@ -500,10 +618,12 @@ def _update_proposal_for_approval(
     schedule: ScheduleResult,
     *,
     voice_mode: str = "kory",
+    recipient_timezone: str | None = None,
 ) -> None:
     from app.agents.inbound_reply import _finalize_draft
 
     drafted = _finalize_draft(schedule.drafted_reply, voice_mode=voice_mode)
+    note = (schedule.scheduling_note or "").strip() or None
     conn.execute(
         """
         UPDATE proposals
@@ -511,6 +631,8 @@ def _update_proposal_for_approval(
             proposed_slots = ?,
             drafted_reply = ?,
             confidence_score = ?,
+            recipient_timezone = COALESCE(?, recipient_timezone),
+            scheduling_note = COALESCE(?, scheduling_note),
             updated_at = datetime('now')
         WHERE id = ?
         """,
@@ -519,6 +641,8 @@ def _update_proposal_for_approval(
             json.dumps(schedule.slots, default=str),
             drafted,
             schedule.confidence_score,
+            recipient_timezone,
+            note,
             proposal_id,
         ),
     )
@@ -548,14 +672,65 @@ def _insert_audit_log(
     )
 
 
-def _template_reply(proposal: PendingProposal, slots: list[dict[str, str]]) -> str:
-    from app.scheduling.email_format import build_scheduling_reply, sender_first_name
-    from app.scheduling.lexi_voice import normalize_voice_mode
+def _resolve_recipient_timezone(proposal: PendingProposal) -> str | None:
+    if proposal.recipient_timezone:
+        return proposal.recipient_timezone
+    from app.scheduling.timezone_intel import lookup_recipient_timezone
 
+    result = lookup_recipient_timezone(
+        sender_email=proposal.sender,
+        body=proposal.raw_body or "",
+        received_at=proposal.received_at,
+    )
+    if result.confidence != "unknown" and result.tz_name():
+        return result.tz_name()
+    return None
+
+
+def _general_reply_placeholder(proposal: PendingProposal, plan) -> str:
+    from app.scheduling.email_format import recipient_display_name, sender_first_name
+    from app.scheduling.lexi_voice import LEXI_SIGNOFF_BLOCK, normalize_voice_mode
+
+    name = recipient_display_name(
+        proposal.sender,
+        proposal.raw_body or "",
+        fallback_first_name=sender_first_name(proposal.sender),
+    )
+    if normalize_voice_mode(proposal.voice_mode) == "lexi":
+        return (
+            f"Hi {name},\n\n"
+            "I'm Lexi, Kory's assistant. Thanks for your note — "
+            f"{plan.draft_context or 'I will follow up shortly.'}\n\n"
+            f"{LEXI_SIGNOFF_BLOCK}"
+        )
+    return f"Hi {name},\n\nThanks for your note. Kory will follow up shortly.\n\nLet's Win,\nKory"
+
+
+def _template_reply(proposal: PendingProposal, slots: list[dict[str, str]]) -> str:
+    from app.scheduling.email_format import build_scheduling_reply, recipient_display_name, sender_first_name
+    from app.scheduling.lexi_voice import normalize_voice_mode
+    from app.integrations.outlook_email import get_message
+    from app.scheduling.timezone_intel import extract_internet_headers
+
+    headers: list[dict[str, Any]] | None = None
+    try:
+        full_message, _ = get_message(proposal.thread_id)
+        headers = extract_internet_headers(full_message)
+    except Exception:
+        headers = None
+
+    first = recipient_display_name(
+        proposal.sender,
+        proposal.raw_body or "",
+        fallback_first_name=sender_first_name(proposal.sender),
+    )
     return build_scheduling_reply(
-        recipient_first_name=sender_first_name(proposal.sender),
+        recipient_first_name=first,
         slots=slots[:MAX_SLOT_OPTIONS],
         sender_email=proposal.sender,
+        recipient_body=proposal.raw_body or "",
+        internet_headers=headers,
+        stored_recipient_timezone=proposal.recipient_timezone,
         voice_mode=normalize_voice_mode(proposal.voice_mode),
     )
 

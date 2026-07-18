@@ -15,15 +15,24 @@ import rules as kory_rules
 
 logger = logging.getLogger(__name__)
 
-PENDING_APPROVAL = "pending_approval"
+ACTIVE_HOLD_STATUSES = ("pending_approval", "offer_sent", "pending_invite")
 RELEASED_STATUS = "released"
+PENDING_APPROVAL = "pending_approval"
 
 
 def run_hold_lifecycle_cycle() -> dict[str, Any]:
-    """Release expired holds; optional Friday cleanup for next-week slots."""
+    """Release expired holds; stage hold reminders; optional Friday cleanup."""
+    from app.scheduling.hold_reminder import process_due_hold_reminders
+
+    reminders = process_due_hold_reminders()
     released = _release_expired_holds()
     friday = _friday_cleanup_next_week_holds()
-    return {"released_expired": released, "friday_cleanup": friday}
+    return {
+        "hold_reminders_staged": len(reminders),
+        "reminders": reminders,
+        "released_expired": released,
+        "friday_cleanup": friday,
+    }
 
 
 def _release_expired_holds() -> int:
@@ -40,11 +49,11 @@ def _release_expired_holds() -> int:
             WHERE h.expires_at IS NOT NULL
               AND h.expires_at != ?
               AND h.expires_at <= ?
-              AND p.status = ?
+              AND p.status IN ({placeholders})
               AND h.event_id NOT LIKE 'hold-pending-%'
               AND COALESCE(h.event_id, '') != ''
-            """,
-            (RELEASED_STATUS, now, PENDING_APPROVAL),
+            """.format(placeholders=",".join("?" * len(ACTIVE_HOLD_STATUSES))),
+            (RELEASED_STATUS, now, *ACTIVE_HOLD_STATUSES),
         ).fetchall()
 
         for row in rows:
@@ -99,12 +108,12 @@ def _friday_cleanup_next_week_holds() -> int:
             SELECT h.id, h.proposal_id, h.event_id, h.slot_start
             FROM holds AS h
             INNER JOIN proposals AS p ON p.id = h.proposal_id
-            WHERE p.status = ?
+            WHERE p.status IN ({placeholders})
               AND h.expires_at != ?
               AND h.event_id NOT LIKE 'hold-pending-%'
               AND COALESCE(h.event_id, '') != ''
-            """,
-            (PENDING_APPROVAL, RELEASED_STATUS),
+            """.format(placeholders=",".join("?" * len(ACTIVE_HOLD_STATUSES))),
+            (*ACTIVE_HOLD_STATUSES, RELEASED_STATUS),
         ).fetchall()
 
         for row in rows:

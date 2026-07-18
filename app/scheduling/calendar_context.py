@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +23,19 @@ from app.scheduling.calendar_intelligence import (
 
 logger = logging.getLogger(__name__)
 
+_CONTEXT_CACHE_TTL_SEC = 300.0
+_context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def clear_scheduling_calendar_context_cache() -> None:
+    """Drop cached calendar context (tests / forced refresh)."""
+    _context_cache.clear()
+
+
+def _context_cache_key(*, days: int, subject: str, body: str) -> str:
+    hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+    return f"{days}:{hour}:{hash((subject.strip(), body.strip()))}"
+
 
 def load_scheduling_calendar_context(
     *,
@@ -35,6 +49,27 @@ def load_scheduling_calendar_context(
         body=body,
         explicit_days=horizon_days,
     )
+    cache_key = _context_cache_key(days=days, subject=subject, body=body)
+    now = time.monotonic()
+    cached = _context_cache.get(cache_key)
+    if cached and now - cached[0] < _CONTEXT_CACHE_TTL_SEC:
+        return cached[1]
+
+    context = _load_scheduling_calendar_context_uncached(
+        subject=subject,
+        body=body,
+        days=days,
+    )
+    _context_cache[cache_key] = (now, context)
+    return context
+
+
+def _load_scheduling_calendar_context_uncached(
+    *,
+    subject: str,
+    body: str,
+    days: int,
+) -> dict[str, Any]:
     start = datetime.now(timezone.utc)
     end = start + timedelta(days=days)
     start_iso = start.isoformat()
@@ -43,16 +78,22 @@ def load_scheduling_calendar_context(
     try:
         raw_events: list[dict[str, Any]] = []
 
-        primary_events, log_id = get_calendar_events(start_iso, end_iso)
-        for event in primary_events:
-            if is_blocking_event(event):
-                event = dict(event)
-                event["calendar_name"] = event.get("calendar_name") or "Calendar"
-                event["source"] = "primary_calendar"
-                raw_events.append(event)
-
         named_events, named_meta = fetch_events_chunked(start_iso, end_iso)
         raw_events.extend(named_events)
+
+        from app.integrations.named_calendars import conflict_calendar_names
+
+        reads_master = any("master calendar" in n.lower() for n in conflict_calendar_names())
+        log_id = named_meta.get("log_id")
+        if not reads_master:
+            primary_events, primary_log = get_calendar_events(start_iso, end_iso)
+            log_id = log_id or primary_log
+            for event in primary_events:
+                if is_blocking_event(event):
+                    event = dict(event)
+                    event["calendar_name"] = event.get("calendar_name") or "Calendar"
+                    event["source"] = "primary_calendar"
+                    raw_events.append(event)
 
         for event in get_family_busy_events(start_iso, end_iso):
             event = dict(event)

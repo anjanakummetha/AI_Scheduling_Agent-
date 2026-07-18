@@ -6,7 +6,6 @@ from typing import Any
 
 from app.agents.comms_agent import execute_lexi_approval, get_lexi_pending_queue
 from app.agents.inbound_reply import begin_draft_reply, decline_reply, get_inbound_reply_queue
-from app.bot.teams_publisher import schedule_teams_approval_push
 from app.bot.teams_text import (
     TEAMS_HELP_TEXT,
     find_pending_item,
@@ -17,13 +16,20 @@ from app.bot.teams_text import (
     resolve_slot_for_option,
 )
 from app.bot.teams_labels import action_confirmation_message, email_thread_label
-from app.utils.teams_cards import CARD_ACTION_APPROVAL, CARD_ACTION_SAVE_DRAFT, INPUT_DRAFT_ID
+from app.config import settings
+from app.utils.teams_cards import (
+    CARD_ACTION_APPROVAL,
+    CARD_ACTION_INVITE,
+    CARD_ACTION_REOFFER,
+    CARD_ACTION_SAVE_DRAFT,
+    INPUT_DRAFT_ID,
+)
 
 
 def handle_teams_card_submit(value: dict[str, Any], *, authorized_by: str = "kory") -> dict[str, Any]:
     """Process Adaptive Card submit payloads (editable draft + Send/Discard/Save)."""
     action = str(value.get("action") or "").strip()
-    if action not in {CARD_ACTION_APPROVAL, CARD_ACTION_SAVE_DRAFT}:
+    if action not in {CARD_ACTION_APPROVAL, CARD_ACTION_SAVE_DRAFT, CARD_ACTION_INVITE, CARD_ACTION_REOFFER}:
         return {
             "ok": False,
             "handled": False,
@@ -69,6 +75,68 @@ def handle_teams_card_submit(value: dict[str, Any], *, authorized_by: str = "kor
             "handled": True,
             "message": f"Saved draft for **{label}**. Tap Send when ready.",
             "proposal_id": proposal_id,
+        }
+
+    if action == CARD_ACTION_REOFFER:
+        from app.agents.inbound_reply import begin_reoffer_schedule
+
+        result = begin_reoffer_schedule(proposal_id)
+        if result.get("ok"):
+            return {
+                "ok": True,
+                "handled": True,
+                "message": result.get("message", "New times drafted."),
+                "proposal_id": proposal_id,
+            }
+        return {
+            "ok": False,
+            "handled": True,
+            "message": result.get("error", "Could not draft new times."),
+            "proposal_id": proposal_id,
+        }
+
+    if action == CARD_ACTION_INVITE:
+        decision = str(value.get("decision") or "approved").strip().lower()
+        selected_slot = str(value.get("selected_slot") or "").strip()
+        if decision != "approved":
+            return {
+                "ok": True,
+                "handled": True,
+                "message": "Invite not sent — holds remain on calendar.",
+                "proposal_id": proposal_id,
+            }
+        from app.agents.comms_agent import execute_lexi_invite
+
+        try:
+            result = execute_lexi_invite(
+                proposal_id,
+                selected_slot,
+                authorized_by,
+                decision_source="teams_card",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "handled": True,
+                "message": f"Could not send invite: {exc}",
+                "proposal_id": proposal_id,
+            }
+        if result.ok:
+            suffix = " (dry run)" if settings.lexi_dry_run else ""
+            return {
+                "ok": True,
+                "handled": True,
+                "message": f"Calendar invite sent{suffix}.",
+                "proposal_id": proposal_id,
+                "execution": result.to_dict(),
+            }
+        errors = ", ".join(result.errors or []) or "unknown error"
+        return {
+            "ok": False,
+            "handled": True,
+            "message": f"Invite failed: {errors}",
+            "proposal_id": proposal_id,
+            "execution": result.to_dict(),
         }
 
     decision = str(value.get("decision") or "").strip().lower()
@@ -151,6 +219,87 @@ def handle_teams_command(text: str, *, authorized_by: str = "kory") -> dict[str,
             "inbound_count": len(items),
         }
 
+    if action == "inbox_review":
+        from app.assistant.inbox_review import build_inbox_review
+
+        review = build_inbox_review(hours=48)
+        return {
+            "ok": True,
+            "handled": True,
+            "message": review.get("kory_message", "Inbox review complete."),
+            "action_count": review.get("action_count", 0),
+        }
+
+    if action == "unanswered":
+        from app.assistant.briefings import build_unanswered_brief
+
+        brief = build_unanswered_brief()
+        return {"ok": True, "handled": True, "message": brief.get("kory_message", "")}
+
+    if action == "today":
+        from app.assistant.briefings import build_today_calendar_brief
+
+        brief = build_today_calendar_brief()
+        return {"ok": True, "handled": True, "message": brief.get("kory_message", "")}
+
+    if action == "prebrief":
+        from app.assistant.briefings import build_prebriefs_for_today
+
+        brief = build_prebriefs_for_today(include_research=False)
+        return {"ok": True, "handled": True, "message": brief.get("kory_message", "")}
+
+    if action == "daily_briefing":
+        from app.assistant.briefings import build_daily_ceo_briefing
+
+        brief = build_daily_ceo_briefing()
+        return {"ok": True, "handled": True, "message": brief.get("kory_message", "")}
+
+    if action == "outreach_list":
+        from app.assistant.actions import list_outreach_campaigns_action
+
+        result = list_outreach_campaigns_action()
+        return {
+            "ok": True,
+            "handled": True,
+            "message": result.get("kory_message", "No campaigns."),
+        }
+
+    if action == "outreach_get":
+        from app.assistant.actions import get_outreach_campaign_action
+
+        result = get_outreach_campaign_action(campaign_id=str(command.get("campaign_id") or ""))
+        return {
+            "ok": bool(result.get("ok")),
+            "handled": True,
+            "message": result.get("kory_message") or result.get("error") or "Not found.",
+        }
+
+    if action == "outreach_approve":
+        from app.assistant.actions import approve_outreach_campaign_action
+
+        result = approve_outreach_campaign_action(
+            campaign_id=str(command.get("campaign_id") or ""),
+            confirm=True,
+        )
+        return {
+            "ok": bool(result.get("ok")),
+            "handled": True,
+            "message": result.get("kory_message") or result.get("error") or "Done.",
+        }
+
+    if action == "outreach_send":
+        from app.assistant.actions import send_outreach_campaign_action
+
+        result = send_outreach_campaign_action(
+            campaign_id=str(command.get("campaign_id") or ""),
+            confirm=True,
+        )
+        return {
+            "ok": bool(result.get("ok")),
+            "handled": True,
+            "message": result.get("kory_message") or result.get("error") or "Send blocked.",
+        }
+
     if action == "draft_no":
         proposal_id = int(command["proposal_id"])
         bundle = _fetch_bundle(proposal_id)
@@ -214,6 +363,8 @@ def handle_teams_command(text: str, *, authorized_by: str = "kory") -> dict[str,
             lines.append(result.get("message", "Draft ready."))
         item = find_pending_item(proposal_id)
         if item:
+            from app.bot.teams_publisher import schedule_teams_approval_push
+
             schedule_teams_approval_push(proposal_id)
         return {
             "ok": True,

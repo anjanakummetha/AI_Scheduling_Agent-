@@ -77,20 +77,214 @@ def get_message(message_id: str) -> tuple[dict[str, Any], str | None]:
                 "receivedDateTime",
                 "body",
                 "bodyPreview",
+                "internetMessageHeaders",
+                "conversationId",
             ],
         },
     )
     return _coerce_data(result["data"]), result.get("log_id")
 
 
-def create_draft_reply(message_id: str, body: str) -> tuple[str | None, str | None]:
+def _message_sender_email(message: dict[str, Any]) -> str:
+    sender = message.get("from") or {}
+    if isinstance(sender, dict):
+        addr = (sender.get("emailAddress") or {}).get("address")
+        return str(addr or "").strip().lower()
+    return ""
+
+
+def _message_to_emails(message: dict[str, Any]) -> list[str]:
+    emails: list[str] = []
+    for item in extract_recipient_list(message).get("to_recipients") or []:
+        if isinstance(item, dict):
+            addr = (item.get("emailAddress") or {}).get("address")
+            if addr:
+                emails.append(str(addr).strip().lower())
+    return emails
+
+
+def _is_kory_sender_email(email: str) -> bool:
+    addr = (email or "").strip().lower()
+    if not addr:
+        return False
+    return addr in {e.lower() for e in settings.kory_sender_emails}
+
+
+def _pick_lexi_delegation_anchor(
+    messages: list[dict[str, Any]],
+    *,
+    intended_recipient: str | None = None,
+) -> dict[str, Any] | None:
+    """Pick Kory's delegation message (Kory → external recipient) for reply-all."""
+    intended = (intended_recipient or "").strip().lower()
+    kory_delegation: list[dict[str, Any]] = []
+
+    for message in messages:
+        sender = _message_sender_email(message)
+        if not _is_kory_sender_email(sender):
+            continue
+        if sender == (settings.lexi_mailbox_email or "").strip().lower():
+            continue
+        to_emails = _message_to_emails(message)
+        if not to_emails:
+            continue
+        if intended and intended not in to_emails:
+            continue
+        if not intended and all(_is_kory_sender_email(addr) for addr in to_emails):
+            continue
+        kory_delegation.append(message)
+
+    if kory_delegation:
+        kory_delegation.sort(
+            key=lambda item: str(item.get("receivedDateTime") or ""),
+            reverse=True,
+        )
+        return kory_delegation[0]
+
+    for message in messages:
+        sender = _message_sender_email(message)
+        if sender and not _is_kory_sender_email(sender):
+            return message
+    return messages[0] if messages else None
+
+
+def resolve_lexi_reply_message_id(
+    kory_message_id: str,
+    *,
+    conversation_id: str | None = None,
+    intended_recipient: str | None = None,
+) -> str:
+    """Map a Kory-mailbox Graph id to Lexi's reply-all anchor in the same thread."""
     if settings.lexi_dry_run:
-        logger.info("[DRY RUN] Would create draft reply for thread/message %s", message_id)
+        anchor = (kory_message_id or conversation_id or "dry-run").strip()
+        return f"dry-run-lexi-{anchor[:32]}"
+
+    from app.integrations.composio_client import execute_tool
+    from app.integrations.outlook_thread import extract_list_messages
+
+    cid = (conversation_id or "").strip()
+    if not cid and (kory_message_id or "").strip():
+        kory_msg, _ = get_message(kory_message_id)
+        cid = str(kory_msg.get("conversationId") or "").strip()
+    if not cid:
+        raise RuntimeError(
+            "Could not resolve Outlook conversation for Lexi reply. "
+            "Ensure Lexi is CC'd on Kory's delegation email."
+        )
+
+    result = execute_tool(
+        "OUTLOOK_LIST_MESSAGES",
+        {
+            "user_id": "me",
+            "folder": "inbox",
+            "top": 25,
+            "orderby": ["receivedDateTime desc"],
+            "select": [
+                "id",
+                "subject",
+                "from",
+                "toRecipients",
+                "ccRecipients",
+                "receivedDateTime",
+                "conversationId",
+            ],
+            "filter": f"conversationId eq '{cid}'",
+        },
+        role="lexi",
+    )
+    messages = extract_list_messages(result.get("data"))
+    if not messages:
+        raise RuntimeError(
+            "Thread not found in Lexi mailbox. Ensure Kory CC'd lexi@ on the reply."
+        )
+    anchor = _pick_lexi_delegation_anchor(messages, intended_recipient=intended_recipient)
+    if not anchor:
+        raise RuntimeError("Could not find a delegation anchor message in Lexi's mailbox.")
+    return str(anchor["id"])
+
+
+def _create_lexi_reply_all_draft(
+    message_id: str,
+    body: str,
+    *,
+    source_mail_folder_id: str = "inbox",
+) -> tuple[str | None, str | None]:
+    """Reply-all on Kory's delegation message with HTML body and signature."""
+    from app.scheduling.lexi_html_signature import (
+        lexi_html_email_package,
+        lexi_html_signature_enabled,
+    )
+
+    result = execute_tool(
+        "OUTLOOK_CREATE_REPLY_ALL_DRAFT",
+        {
+            "message_id": message_id,
+            "mail_folder_id": source_mail_folder_id,
+            "user_id": "me",
+            "comment": "",
+        },
+        role="lexi",
+    )
+    draft_id = _extract_draft_message_id(result.get("data")) or _extract_id(
+        _coerce_data(result.get("data"))
+    )
+    if not draft_id:
+        return None, result.get("log_id")
+
+    update_args: dict[str, Any] = {
+        "user_id": "me",
+        "mail_folder_id": "drafts",
+        "message_id": draft_id,
+    }
+    if lexi_html_signature_enabled():
+        html_body, inline_attachments, _ = lexi_html_email_package(body)
+        update_args["body"] = {"contentType": "html", "content": html_body}
+        execute_tool("OUTLOOK_UPDATE_USER_MAIL_FOLDER_MESSAGE", update_args, role="lexi")
+        if inline_attachments:
+            attachment = inline_attachments[0]
+            execute_tool(
+                "OUTLOOK_ADD_MAIL_ATTACHMENT",
+                {
+                    "user_id": "me",
+                    "message_id": draft_id,
+                    "odata_type": attachment["@odata.type"],
+                    "name": attachment["name"],
+                    "contentType": attachment["contentType"],
+                    "content_bytes": attachment["contentBytes"],
+                    "isInline": True,
+                    "contentId": attachment["contentId"],
+                },
+                role="lexi",
+            )
+    else:
+        update_args["body"] = {
+            "contentType": "text",
+            "content": body.replace("\n", "\r\n"),
+        }
+        execute_tool("OUTLOOK_UPDATE_USER_MAIL_FOLDER_MESSAGE", update_args, role="lexi")
+
+    ensure_kory_cc_on_lexi_draft(draft_id)
+    return draft_id, result.get("log_id")
+
+
+def create_draft_reply(
+    message_id: str,
+    body: str,
+    *,
+    send_channel: SendChannel = "kory",
+) -> tuple[str | None, str | None]:
+    channel = (send_channel or "kory").strip().lower()
+    if settings.lexi_dry_run:
+        mode = "reply-all" if channel == "lexi" else "reply"
+        logger.info(
+            "[DRY RUN] Would create %s draft for thread/message %s", mode, message_id
+        )
         print(
-            "\n[Lexi DRY RUN] Email NOT sent. Draft reply preview:\n"
+            f"\n[Lexi DRY RUN] Email NOT sent. Draft {mode} preview:\n"
             "─" * 60 + "\n"
             f"{body}\n"
-            "─" * 60 + "\n",
+            "─" * 60 + "\n"
+            f"Kory CC: {', '.join(merge_kory_cc_addresses()) or '(none configured)'}\n",
             flush=True,
         )
         return f"dry-run-draft-{message_id[:24]}", "dry-run-no-log"
@@ -104,19 +298,64 @@ def create_draft_reply(message_id: str, body: str) -> tuple[str | None, str | No
             approved_send=True,
         )
 
-    result = execute_write_tool(
+    if channel == "lexi":
+        return _create_lexi_reply_all_draft(message_id, body)
+
+    result = execute_tool(
         "OUTLOOK_CREATE_DRAFT_REPLY",
         {
             "message_id": message_id,
             "user_id": "me",
-            "comment": body,
+            "comment": body.replace("\n", "\r\n"),
         },
+        role="write",
     )
     data = _coerce_data(result["data"])
     return _extract_id(data), result.get("log_id")
 
 
-def send_draft(draft_message_id: str) -> str | None:
+def send_reply_in_thread(
+    message_id: str,
+    body: str,
+    *,
+    send_channel: SendChannel = "lexi",
+    approved_send: bool = True,
+    conversation_id: str | None = None,
+    intended_recipient: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Reply in the same Outlook thread (delegation / CC Lexi path)."""
+    from app.safety.approval_gate import assert_outbound_send_authorized
+
+    channel = (send_channel or "lexi").strip().lower()
+    if channel not in {"kory", "lexi"}:
+        channel = "lexi"
+    assert_outbound_send_authorized(approved_send=approved_send, send_channel=channel)
+
+    from app.scheduling.email_format import finalize_lexi_email_body, finalize_outbound_email_body
+
+    if channel == "lexi":
+        reply_body = finalize_lexi_email_body(body)
+        target_message_id = resolve_lexi_reply_message_id(
+            message_id,
+            conversation_id=conversation_id,
+            intended_recipient=intended_recipient,
+        )
+    else:
+        reply_body = finalize_outbound_email_body(body)
+        target_message_id = message_id
+
+    draft_id, draft_log = create_draft_reply(
+        target_message_id,
+        reply_body,
+        send_channel=channel,  # type: ignore[arg-type]
+    )
+    if not draft_id:
+        return None, draft_log
+    send_log = send_draft(draft_id, send_channel=channel)  # type: ignore[arg-type]
+    return draft_id, send_log or draft_log
+
+
+def send_draft(draft_message_id: str, *, send_channel: SendChannel = "kory") -> str | None:
     if settings.lexi_dry_run:
         logger.info("[DRY RUN] Would send draft %s (skipped)", draft_message_id)
         print(f"\n[Lexi DRY RUN] Would send draft id={draft_message_id} (not sent)\n", flush=True)
@@ -127,12 +366,17 @@ def send_draft(draft_message_id: str) -> str | None:
     if settings.lexi_write_mode == "sandbox" and settings.sandbox_email_loopback:
         return "sandbox-already-sent"
 
-    result = execute_write_tool(
+    from app.integrations.composio_client import execute_tool
+
+    channel = (send_channel or "kory").strip().lower()
+    role = "lexi" if channel == "lexi" else "write"
+    result = execute_tool(
         "OUTLOOK_SEND_DRAFT",
         {
             "message_id": draft_message_id,
             "user_id": "me",
         },
+        role=role,  # type: ignore[arg-type]
     )
     return result.get("log_id")
 
@@ -169,13 +413,12 @@ def _send_lexi_html_via_draft(
     """Create draft, attach inline logo (CID), send — required for Gmail-compatible images."""
     draft_result = execute_tool(
         "OUTLOOK_CREATE_DRAFT",
-        {
-            "user_id": "me",
-            "subject": subject,
-            "body": html_body,
-            "is_html": True,
-            "to_recipients": [recipient],
-        },
+        _build_outlook_draft_arguments(
+            recipient=recipient,
+            subject=subject,
+            body=html_body,
+            is_html=True,
+        ),
         role=write_role,
     )
     message_id = _extract_draft_message_id(draft_result.get("data"))
@@ -209,6 +452,233 @@ def _send_lexi_html_via_draft(
     return message_id, send_result.get("log_id")
 
 
+def _kory_cc_addresses() -> list[str]:
+    """Kory stays on Lexi-sent mail so he sees replies that skip his inbox."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for email in settings.kory_sender_emails:
+        addr = email.strip().lower()
+        if addr and "@" in addr and addr not in seen:
+            seen.add(addr)
+            out.append(addr)
+    return out
+
+
+def _graph_recipient_list(emails: list[str]) -> list[dict[str, Any]]:
+    return [
+        {"emailAddress": {"address": addr}}
+        for addr in emails
+        if addr and "@" in addr
+    ]
+
+
+def _plain_email_list(emails: list[str]) -> list[str]:
+    """Composio Outlook tools expect recipient lists as plain email strings."""
+    return [addr.strip().lower() for addr in emails if addr and "@" in addr]
+
+
+def _build_outlook_draft_arguments(
+    *,
+    recipient: str,
+    subject: str,
+    body: str,
+    is_html: bool,
+    cc_emails: list[str] | None = None,
+) -> dict[str, Any]:
+    """Composio OUTLOOK_CREATE_DRAFT payload — plain-string recipients; omit empty CC."""
+    to_list = _plain_email_list([recipient])
+    if not to_list:
+        raise ValueError("recipient must be a valid email address.")
+    args: dict[str, Any] = {
+        "user_id": "me",
+        "subject": subject,
+        "body": body,
+        "is_html": is_html,
+        "to_recipients": to_list,
+    }
+    cc_list = _plain_email_list(merge_kory_cc_addresses(cc_emails))
+    if cc_list:
+        args["cc_recipients"] = cc_list
+    return args
+
+
+def merge_kory_cc_addresses(existing: list[str] | None = None) -> list[str]:
+    """Merge configured Kory addresses into a CC list (deduped, lowercased)."""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for addr in list(existing or []) + _kory_cc_addresses():
+        normalized = addr.strip().lower()
+        if normalized and "@" in normalized and normalized not in seen:
+            seen.add(normalized)
+            merged.append(normalized)
+    return merged
+
+
+def ensure_kory_cc_on_lexi_draft(draft_id: str) -> None:
+    """Reply-all may drop Kory when he was not on the original To/CC — always add him."""
+    if settings.lexi_dry_run or not draft_id or draft_id.startswith("dry-run"):
+        return
+    kory_cc = merge_kory_cc_addresses()
+    if not kory_cc:
+        return
+    execute_tool(
+        "OUTLOOK_UPDATE_USER_MAIL_FOLDER_MESSAGE",
+        {
+            "user_id": "me",
+            "mail_folder_id": "drafts",
+            "message_id": draft_id,
+            "cc_recipients": _graph_recipient_list(kory_cc),
+        },
+        role="lexi",
+    )
+
+
+def forward_message_from_lexi_mailbox(
+    message_id: str,
+    *,
+    to_email: str,
+    comment: str = "",
+    cc_emails: list[str] | None = None,
+) -> dict[str, Any]:
+    """Forward a thread message from Lexi's mailbox (e.g. escalate to Heidi)."""
+    if not message_id or not to_email:
+        return {"forwarded": False, "reason": "missing message_id or recipient"}
+    if settings.lexi_dry_run:
+        cc_preview = merge_kory_cc_addresses(cc_emails)
+        logger.info(
+            "[DRY RUN] Would forward message %s to %s cc=%s",
+            message_id,
+            to_email,
+            cc_preview,
+        )
+        return {
+            "forwarded": False,
+            "dry_run": True,
+            "to": to_email,
+            "cc": cc_preview,
+            "message_id": message_id,
+        }
+
+    cc = merge_kory_cc_addresses(cc_emails)
+    comment_text = (comment or "").replace("\n", "\r\n")
+    argument_sets: list[dict[str, Any]] = [
+        {
+            "user_id": "me",
+            "message_id": message_id,
+            "to_recipients": [to_email],
+            "comment": comment_text,
+            **({"cc_recipients": cc} if cc else {}),
+        },
+        {
+            "user_id": "me",
+            "message_id": message_id,
+            "to": to_email,
+            "comment": comment_text,
+            **({"cc_emails": cc} if cc else {}),
+        },
+    ]
+    last_error: Exception | None = None
+    for arguments in argument_sets:
+        try:
+            result = execute_tool("OUTLOOK_FORWARD_MESSAGE", arguments, role="lexi")
+            data = _coerce_data(result.get("data"))
+            forwarded_id = _extract_id(data)
+            return {
+                "forwarded": True,
+                "to": to_email,
+                "cc": cc,
+                "message_id": forwarded_id or message_id,
+                "log_id": result.get("log_id"),
+            }
+        except Exception as exc:
+            last_error = exc
+            continue
+    return {
+        "forwarded": False,
+        "error": str(last_error) if last_error else "forward failed",
+        "to": to_email,
+        "cc": cc,
+    }
+
+
+def kory_cc_addresses() -> list[str]:
+    """Public accessor for Kory CC list on Lexi-sent mail."""
+    return _kory_cc_addresses()
+
+
+def infer_outbound_send_channel(body: str, *, explicit: str = "") -> str:
+    """Pick kory vs lexi mailbox for chat-initiated outbound mail."""
+    channel = (explicit or "").strip().lower()
+    if channel in {"kory", "lexi"}:
+        return channel
+    normalized = (body or "").strip().lower()
+    if "let's win" in normalized and normalized.rstrip().endswith("kory"):
+        return "kory"
+    default = (settings.lexi_default_send_channel or "lexi").strip().lower()
+    return default if default in {"kory", "lexi"} else "lexi"
+
+
+def create_outbound_draft(
+    *,
+    to_email: str,
+    subject: str,
+    body: str,
+    approved: bool = False,
+    send_channel: SendChannel = "kory",
+    cc_emails: list[str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Create an Outlook draft (does not send). Blocked in dry-run / UAT unless enabled."""
+    import os
+    import uuid
+
+    channel = (send_channel or "kory").strip().lower()
+    if channel not in {"kory", "lexi"}:
+        channel = "kory"
+
+    drafts_enabled = os.getenv("LEXI_OUTREACH_OUTLOOK_DRAFTS_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if settings.lexi_dry_run or not drafts_enabled or not approved:
+        preview_id = f"dry-run-outreach-draft-{uuid.uuid4().hex[:10]}"
+        logger.info(
+            "[DRY RUN] Would create Outlook draft to=%s subject=%s id=%s",
+            to_email,
+            subject,
+            preview_id,
+        )
+        print(
+            f"\n[Lexi DRY RUN] Outlook draft NOT created.\n"
+            f"  To: {to_email}\n"
+            f"  Subject: {subject}\n"
+            f"  Preview id: {preview_id}\n",
+            flush=True,
+        )
+        return preview_id, "dry-run-no-log"
+
+    recipient = (to_email or "").strip()
+    if not recipient or "@" not in recipient:
+        raise ValueError("to_email is required for outbound draft.")
+
+    write_role: ConnectionRole = "lexi" if channel == "lexi" else "write"
+    result = execute_tool(
+        "OUTLOOK_CREATE_DRAFT",
+        _build_outlook_draft_arguments(
+            recipient=recipient,
+            subject=subject,
+            body=body.replace("\n", "\r\n"),
+            is_html=False,
+            cc_emails=cc_emails,
+        ),
+        role=write_role,
+    )
+    message_id = _extract_draft_message_id(result.get("data")) or _extract_id(
+        _coerce_data(result.get("data"))
+    )
+    return message_id, result.get("log_id")
+
+
 def send_outbound_email(
     *,
     to_email: str,
@@ -216,6 +686,7 @@ def send_outbound_email(
     body: str,
     approved_send: bool = False,
     send_channel: SendChannel = "kory",
+    cc_emails: list[str] | None = None,
 ) -> tuple[str | None, str | None]:
     """Send email via write mailbox (sandbox loopback in pilot) or Lexi mailbox.
 
@@ -247,9 +718,18 @@ def send_outbound_email(
             pilot_subject = f"[Lexi pilot] {subject}"
 
     if settings.lexi_dry_run:
-        logger.info("[DRY RUN] Would send outbound email to %s subject=%s", recipient, pilot_subject)
+        cc_preview = cc_emails or (_kory_cc_addresses() if channel == "lexi" else [])
+        logger.info(
+            "[DRY RUN] Would send outbound email to %s cc=%s subject=%s",
+            recipient,
+            cc_preview,
+            pilot_subject,
+        )
         print(
-            f"\n[Lexi DRY RUN] Outbound email NOT sent.\n  To: {recipient}\n  Subject: {pilot_subject}\n",
+            f"\n[Lexi DRY RUN] Outbound email NOT sent.\n"
+            f"  To: {recipient}\n"
+            f"  CC: {', '.join(cc_preview) if cc_preview else '(none)'}\n"
+            f"  Subject: {pilot_subject}\n",
             flush=True,
         )
         return f"dry-run-outbound-{recipient[:16]}", "dry-run-no-log"
@@ -306,6 +786,15 @@ def send_outbound_email(
         "is_html": is_html,
         "save_to_sent_items": True,
     }
+    if channel == "lexi":
+        merged_cc: list[str] = []
+        seen_cc: set[str] = set()
+        for addr in merge_kory_cc_addresses(cc_emails):
+            if addr not in seen_cc and addr != recipient.lower():
+                seen_cc.add(addr)
+                merged_cc.append(addr)
+        if merged_cc:
+            arguments["cc_emails"] = merged_cc
     if (
         settings.lexi_write_mode == "sandbox"
         and configured_target
@@ -382,6 +871,17 @@ def extract_recipient_list(message: dict[str, Any]) -> dict[str, list[dict[str, 
     return result
 
 
+def merge_list_message_fields(
+    full_message: dict[str, Any],
+    list_item: dict[str, Any],
+) -> dict[str, Any]:
+    """Composio GET_MESSAGE omits conversationId from select — keep it from list/poll."""
+    conv = list_item.get("conversationId") or list_item.get("conversation_id")
+    if conv and not full_message.get("conversationId"):
+        return {**full_message, "conversationId": conv}
+    return full_message
+
+
 def build_inbound_raw_email(
     *,
     message_id: str,
@@ -398,6 +898,14 @@ def build_inbound_raw_email(
         "received_at": normalized.get("received_at") or "",
         "raw_body": normalized["body"],
     }
+    for key in (
+        "recipient_timezone",
+        "recipient_timezone_confidence",
+        "recipient_timezone_source",
+        "internet_message_headers",
+    ):
+        if normalized.get(key) is not None:
+            payload[key] = normalized[key]
     if recipients:
         payload.update(recipients)
     return payload
@@ -413,6 +921,16 @@ def normalize_message(message: dict[str, Any], raw_payload: dict[str, Any]) -> d
         body_text = str(message.get("bodyPreview"))
     apparent_sender_name = _extract_signature_name(body_text)
 
+    from app.scheduling.timezone_intel import resolve_recipient_timezone_at_ingest, extract_internet_headers
+
+    headers = extract_internet_headers(message)
+    tz_result = resolve_recipient_timezone_at_ingest(
+        sender_email=email_address.get("address"),
+        body=body_text,
+        internet_headers=headers,
+        received_at=message.get("receivedDateTime"),
+    )
+
     return {
         "outlook_message_id": message.get("id") or raw_payload.get("message_id"),
         "conversation_id": message.get("conversationId") or message.get("conversation_id"),
@@ -422,6 +940,10 @@ def normalize_message(message: dict[str, Any], raw_payload: dict[str, Any]) -> d
         "subject": message.get("subject") or "(no subject)",
         "body": body_text,
         "received_at": message.get("receivedDateTime"),
+        "internet_message_headers": headers,
+        "recipient_timezone": tz_result.tz_name(),
+        "recipient_timezone_confidence": tz_result.confidence,
+        "recipient_timezone_source": tz_result.source,
         "raw_payload": raw_payload,
     }
 

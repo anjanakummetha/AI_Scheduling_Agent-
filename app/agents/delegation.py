@@ -73,6 +73,17 @@ def _extract_emails(text: str) -> list[str]:
     return [m.group(0).lower() for m in re.finditer(r"[\w.+-]+@[\w.-]+\.\w+", text or "")]
 
 
+KORY_SCHEDULING_ASK = (
+    r"(?:find|get)\s+(?:some\s+)?time",
+    r"find us a time",
+    r"before i take off",
+    r"before i head to",
+    r"connect this week",
+    r"schedule us",
+    r"set up a (?:call|meeting)",
+)
+
+
 def detect_delegation(
     *,
     subject: str,
@@ -105,6 +116,13 @@ def detect_delegation(
         for domain in ("@iconicfounders.com", "@ifg.vc", "kory")
     )
 
+    if lexi_cc and from_kory and any(re.search(p, combined) for p in KORY_SCHEDULING_ASK):
+        return DelegationDecision(
+            is_delegation=True,
+            reason="kory_cc_scheduling_ask",
+            lexi_cc=True,
+            phrase_match=True,
+        )
     if lexi_cc and (phrase_match or from_kory):
         return DelegationDecision(
             is_delegation=True,

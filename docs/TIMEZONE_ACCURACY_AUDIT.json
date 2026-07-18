@@ -1,0 +1,284 @@
+{
+  "generated_at": "2026-07-01T15:59:47.388765+00:00",
+  "fixtures": [
+    {
+      "label": "Newport Advisors (domain)",
+      "sender": "bill.heermann@newportadvisors.co",
+      "expected": "New_York",
+      "detected": "America/New_York",
+      "source": "domain",
+      "confidence": "known",
+      "uncertain": false,
+      "ok": true
+    },
+    {
+      "label": "Chicago signature",
+      "sender": "mike@constructioncpa.com",
+      "expected": "Chicago",
+      "detected": "America/Chicago",
+      "source": "signature",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": true
+    },
+    {
+      "label": "Austin area code",
+      "sender": "founder@startup.io",
+      "expected": "Chicago",
+      "detected": "America/Chicago",
+      "source": "area_code",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": true
+    },
+    {
+      "label": "Eastern explicit",
+      "sender": "x@unknown.io",
+      "expected": "New_York",
+      "detected": "America/New_York",
+      "source": "body",
+      "confidence": "known",
+      "uncertain": false,
+      "ok": true
+    },
+    {
+      "label": "Unknown startup",
+      "sender": "sam@unknown-startup.io",
+      "expected": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true
+    },
+    {
+      "label": "Quoted Kory Denver must not leak",
+      "sender": "cnbrymer@gmail.com",
+      "expected": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true
+    }
+  ],
+  "fixture_accuracy": 1.0,
+  "live": [
+    {
+      "subject": "Beyond the Dashboard: Transform your KPIs",
+      "sender": "netsuite@na.netsuite.com",
+      "domain_expect": null,
+      "detected": "America/Chicago",
+      "source": "signature",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "How Bernie Smith connects strategy, KPIs, and action. View Online GUIDE Beyond the Dashboard Turn KPI insights into meaningful business action Get your copy Investing in dashboards and analyt"
+    },
+    {
+      "subject": "Kory Capacity",
+      "sender": "rohan.ravi@email.zoominfo.com",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "Hey Kory, If you're not maxed out already, I have quite a few companies who have been searching for your services here. Assuming you're able, I'd love to get them to you and cover small business pri"
+    },
+    {
+      "subject": "New Transaction: Patrick and LCI Combine in All-Stock Merger",
+      "sender": "globalbanking@connects.rwbaird.com",
+      "domain_expect": null,
+      "detected": "America/Chicago",
+      "source": "area_code",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "Read our latest Industrial dealTo view this email as a web page, go here.Here's the DealPatrick all-stock merger with LCIOur Latest Industrial Transaction:Patrick Industries, Inc.Combina"
+    },
+    {
+      "subject": "Strengthen Your Team With Top Tier Finance Talent",
+      "sender": "Lori.Prato@remx.com",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "Hello Kory, Highlighted below are several of my top Accounting and Finance Candidates\u2026 \u201c truly the cream of the crop\u201d I invite you to meet our top talent of the week\u2026 Highly skilled Cost Accounta"
+    },
+    {
+      "subject": "RE: TC with Natalie's Counsel",
+      "sender": "scottwiegand@scalefirm.com",
+      "domain_expect": null,
+      "detected": "America/Denver",
+      "source": "chain_area_code",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "Bumping up in your box. Also, I haven\u2019t seen anything from Natalie\u2019s counsel yet, which I had expected to see early this week. I\u2019ll follow up with them after you and I get on the same page re a"
+    },
+    {
+      "subject": "Your Building Products M&A Update",
+      "sender": "dgood@mail.capstonepartners.com",
+      "domain_expect": null,
+      "detected": "America/New_York",
+      "source": "signature",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "Capstone Partners released its latest Building Products Market Update, reporting that ... \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f \u034f"
+    },
+    {
+      "subject": "Accepted: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitchell | 3 pm ET",
+      "sender": "ramzi.dagher@myfirstbank.com",
+      "domain_expect": null,
+      "detected": "America/New_York",
+      "source": "profile",
+      "confidence": "known",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "Confidentiality Note: This electronic message contains advisory, consultative and deliberative material and is intended only for the person(s) named as recipient(s). Any disclosure, copying, d"
+    },
+    {
+      "subject": "RE: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitchell | 11:30 am ET",
+      "sender": "ramzi.dagher@myfirstbank.com",
+      "domain_expect": null,
+      "detected": "America/New_York",
+      "source": "area_code",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "Let\u2019s go with Tuesday 7/7 at 3 pm. Thanks. Ramzi J. Dagher Private Equity Fund & Sponsor Banking SVP, Team Leader 849 Paoli Pike West Chester, PA 19380 Cell: (215) 807-9301 ramzi.dagher@myfirs"
+    },
+    {
+      "subject": "ServiceTitan\u2019s Summer Deal is ON [JULY ONLY] \ud83c\udfa7 \ud83d\ude0e",
+      "sender": "mcom@servicetitan.com",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "See how ServiceTitan keeps contractors productive during peak season. The summer rush is coming (for some it\u2019s already here) and your business is going to need a world-class, end-to-end"
+    },
+    {
+      "subject": "RE: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitchell | 11:30 am ET",
+      "sender": "ramzi.dagher@myfirstbank.com",
+      "domain_expect": null,
+      "detected": "America/New_York",
+      "source": "area_code",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "Hi Kory, no problem. Let me know some dates/times you are available next week and we can reschedule. Thanks. Ramzi J. Dagher Private Equity Fund & Sponsor Banking SVP, Team Leader 849 Paoli Pi"
+    },
+    {
+      "subject": "Does Diversification Still Matter? - Your Money, Your Values - July 2026",
+      "sender": "mwapner@bluelakewealth.com",
+      "domain_expect": null,
+      "detected": "America/Chicago",
+      "source": "area_code",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "July 2026 Hi Kory,Do you know someone who recently left their job, either voluntarily or due to downsizing? If they have concerns about their short- or long-term financial situation, please hav"
+    },
+    {
+      "subject": "Re: quick question Kory",
+      "sender": "evelyn-davis@growiqonline.com",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "Kory, I won\u2019t promise you 225 new clients in 222 seconds, but if you don\u2019t get at least 5 clients in max 3 months, we go in the red, it won't be you :) Available for a conversation this week? I"
+    },
+    {
+      "subject": "Your Outreach Daily Digest: 2026/07/01",
+      "sender": "notifications@app.outreach.io",
+      "domain_expect": null,
+      "detected": "America/Los_Angeles",
+      "source": "signature",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "a:hover {text-decoration:underline} td > a {text-decoration:none} @media only screen and (min-width:481px) and (max-width:599px) { table[class=em_main_table] {width:100%!important} tabl"
+    },
+    {
+      "subject": "Wednesday - tasks due soon: 7, @-mentions: 4, tasks assigned: 1 - iconicfounders",
+      "sender": "no-reply@asana.com",
+      "domain_expect": null,
+      "detected": "America/Los_Angeles",
+      "source": "signature",
+      "confidence": "inferred",
+      "uncertain": false,
+      "ok": null,
+      "body_snippet": "Hi Kory, here's your daily update of Asana tasks: book pulmonologist, Follow up with Angelo (Morgan Stanley) \u2014 Affiliate Investment Bank program, Kory to call Pete (H&F) to check status and clar"
+    },
+    {
+      "subject": "Final Reminder: How satisfied were you with YPO Beyond: Africa Family Safari 202",
+      "sender": "eventevals@ypo.org",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "Dear Kory, Thank you again for your participation in YPO Beyond: Africa Family Safari 2026. This is a final reminder to please complete the event evaluation. The survey will close in 4 days. You"
+    },
+    {
+      "subject": "Upgrade now to reactivate your Azure free account",
+      "sender": "azure-noreply@microsoft.com",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "table {width:640px} body[data-outlook-cycle] .container-wide .main-container > table {width:888px} } @media only screen and (max-width: 640px) { .outer-wrapper > tbody > tr > .wrapper-"
+    },
+    {
+      "subject": "Welcome to the YPO Wine Network",
+      "sender": "ananth@mensabrands.com",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "Dear Kory,Welcome to the YPO Wine Network!My name is Ananth Narayanan, and I serve as the Engagement Officer for the Wine Network. I'm delighted to welcome you to our global community of members who"
+    },
+    {
+      "subject": "2 visitors on Tuesday 30 June on iconicfounders.com",
+      "sender": "info@leadinfo.com",
+      "domain_expect": null,
+      "detected": null,
+      "source": "unknown",
+      "confidence": "unknown",
+      "uncertain": true,
+      "ok": true,
+      "body_snippet": "u ~ div .gmail {min-width:100vw} } --> 2 visitors on Tuesday 30 June on iconicfounders.com Original Roots, LLC Denver 2 pages Shappleydesign 2 pages"
+    },
+    {
+      "subject": "Fwd: Project Keystone EL and WGL",
+      "sender": "natalie@daybreakadvisory.com",
+      "domain_expect": "Los_Angeles",
+      "detected": "America/Los_Angeles",
+      "source": "domain",
+      "confidence": "known",
+      "uncertain": false,
+      "ok": true,
+      "body_snippet": "Kory, This may actually be pretty easy to address via email. See below for my comments in red and let me know if you'd still like to meet tomorrow. For future reference, it would be helpful to know"
+    }
+  ],
+  "live_accuracy_scored": 1.0,
+  "summary": {
+    "fixture_pass": 6,
+    "fixture_total": 6,
+    "live_pass": 9,
+    "live_scored": 9
+  }
+}

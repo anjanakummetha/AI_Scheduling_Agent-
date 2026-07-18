@@ -149,6 +149,30 @@ def _migrate_scheduling_sessions(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_email_thread_conversation(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(email_threads)").fetchall()}
+    if "conversation_id" not in columns:
+        conn.execute("ALTER TABLE email_threads ADD COLUMN conversation_id TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_email_threads_conversation_id
+        ON email_threads (conversation_id)
+        """
+    )
+
+
+def _migrate_proposal_recipient_timezone(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+    if "recipient_timezone" not in columns:
+        conn.execute("ALTER TABLE proposals ADD COLUMN recipient_timezone TEXT")
+
+
+def _migrate_proposal_recipient_slot(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+    if "recipient_selected_slot" not in columns:
+        conn.execute("ALTER TABLE proposals ADD COLUMN recipient_selected_slot TEXT")
+
+
 def _migrate_proposal_metadata(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
     additions = {
@@ -159,6 +183,12 @@ def _migrate_proposal_metadata(conn: sqlite3.Connection) -> None:
     for name, ddl in additions.items():
         if name not in columns:
             conn.execute(f"ALTER TABLE proposals ADD COLUMN {name} {ddl}")
+
+
+def _migrate_proposal_teams_notify(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+    if "teams_approval_notified_at" not in columns:
+        conn.execute("ALTER TABLE proposals ADD COLUMN teams_approval_notified_at TEXT")
 
 
 def _migrate_kory_memory(conn: sqlite3.Connection) -> None:
@@ -174,6 +204,65 @@ def _migrate_holds_expires_at(conn: sqlite3.Connection) -> None:
     }
     if "expires_at" not in columns:
         conn.execute("ALTER TABLE holds ADD COLUMN expires_at TEXT")
+
+
+def _migrate_email_thread_recipient_timezone(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(email_threads)").fetchall()}
+    if "recipient_timezone" not in columns:
+        conn.execute("ALTER TABLE email_threads ADD COLUMN recipient_timezone TEXT")
+
+
+def _migrate_email_thread_headers_json(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(email_threads)").fetchall()}
+    if "internet_headers_json" not in columns:
+        conn.execute("ALTER TABLE email_threads ADD COLUMN internet_headers_json TEXT")
+
+
+def _migrate_recipient_profiles(conn: sqlite3.Connection) -> None:
+    from app.storage.recipient_profiles import ensure_recipient_profiles_table
+
+    ensure_recipient_profiles_table(conn)
+
+
+def _migrate_email_thread_sender_email(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(email_threads)").fetchall()}
+    if "sender_email" not in columns:
+        conn.execute("ALTER TABLE email_threads ADD COLUMN sender_email TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_email_threads_sender_email
+        ON email_threads (sender_email)
+        """
+    )
+    rows = conn.execute(
+        "SELECT thread_id, sender FROM email_threads WHERE sender_email IS NULL OR sender_email = ''"
+    ).fetchall()
+    from app.storage.recipient_profiles import normalize_sender_email
+
+    for row in rows:
+        thread_id = row[0] if isinstance(row, tuple) else row["thread_id"]
+        sender = row[1] if isinstance(row, tuple) else row["sender"]
+        normalized = normalize_sender_email(str(sender or ""))
+        if normalized:
+            conn.execute(
+                "UPDATE email_threads SET sender_email = ? WHERE thread_id = ?",
+                (normalized, thread_id),
+            )
+
+
+def _migrate_proposal_reply_message_id(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+    if "reply_message_id" not in columns:
+        conn.execute("ALTER TABLE proposals ADD COLUMN reply_message_id TEXT")
+
+
+def _migrate_proposal_kory_guidance(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+    if "kory_scheduling_guidance" not in columns:
+        conn.execute("ALTER TABLE proposals ADD COLUMN kory_scheduling_guidance TEXT")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+    if "scheduling_note" not in columns:
+        conn.execute("ALTER TABLE proposals ADD COLUMN scheduling_note TEXT")
 
 
 def _migrate_approval_feedback(conn: sqlite3.Connection) -> None:
@@ -192,9 +281,19 @@ def init_lexi_db(db_path: Path = DB_PATH) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA_SQL)
         _migrate_holds_expires_at(conn)
+        _migrate_email_thread_conversation(conn)
+        _migrate_email_thread_recipient_timezone(conn)
+        _migrate_email_thread_headers_json(conn)
+        _migrate_email_thread_sender_email(conn)
+        _migrate_proposal_recipient_slot(conn)
+        _migrate_proposal_recipient_timezone(conn)
         _migrate_scheduling_sessions(conn)
         _migrate_proposal_metadata(conn)
+        _migrate_proposal_teams_notify(conn)
+        _migrate_proposal_reply_message_id(conn)
+        _migrate_proposal_kory_guidance(conn)
         _migrate_kory_memory(conn)
+        _migrate_recipient_profiles(conn)
         _migrate_approval_feedback(conn)
         conn.commit()
 

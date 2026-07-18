@@ -25,7 +25,13 @@ if ROOT not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.integrations.composio_client import execute_tool, require_composio_connection_id
-from app.integrations.outlook_email import get_message, normalize_message
+from app.integrations.outlook_email import (
+    build_inbound_raw_email,
+    extract_recipient_list,
+    get_message,
+    merge_list_message_fields,
+    normalize_message,
+)
 from app.orchestrator import composio_webhook_to_lexi_email, handle_inbound_stream
 from app.workflows.webhooks import OUTLOOK_MESSAGE_TRIGGER
 
@@ -81,7 +87,7 @@ def main() -> None:
         _process_trigger_payload(payload)
 
     print(f"Listening for {OUTLOOK_MESSAGE_TRIGGER} events for user_id={user_id}.", flush=True)
-    print("Also polling inbox for new messages as a local Lexi fallback.", flush=True)
+    print("Also polling inbox + sent items for new messages as a local Lexi fallback.", flush=True)
     print("Leave this running while sending demo Outlook emails. Press Ctrl+C to stop.", flush=True)
     try:
         while listener.is_alive() and not listener.has_errored():
@@ -109,15 +115,20 @@ def _process_trigger_payload(payload: dict[str, Any]) -> None:
 
 
 def _poll_recent_inbox(started_at: datetime) -> None:
+    for folder in ("inbox", "sentitems"):
+        _poll_recent_folder(folder, started_at=started_at)
+
+
+def _poll_recent_folder(folder: str, *, started_at: datetime) -> None:
     try:
         result = execute_tool(
             "OUTLOOK_LIST_MESSAGES",
             {
                 "user_id": "me",
-                "folder": "inbox",
+                "folder": folder,
                 "top": 10,
                 "orderby": ["receivedDateTime desc"],
-                "select": ["id", "subject", "from", "receivedDateTime", "bodyPreview"],
+                "select": ["id", "subject", "from", "receivedDateTime", "bodyPreview", "conversationId"],
             },
         )
         messages = _extract_messages(result["data"])
@@ -144,24 +155,26 @@ def _poll_recent_inbox(started_at: datetime) -> None:
             with PROCESSING_LOCK:
                 try:
                     full_message, _ = get_message(message_id)
+                    full_message = merge_list_message_fields(full_message, message)
                     normalized = normalize_message(
                         full_message,
-                        {"source": "local_inbox_poll", "message_id": message_id},
+                        {"source": "local_inbox_poll", "message_id": message_id, "folder": folder},
                     )
-                    raw_email = {
-                        "thread_id": message_id,
-                        "subject": normalized["subject"],
-                        "sender": normalized["sender_email"],
-                        "received_at": normalized.get("received_at") or "",
-                        "raw_body": normalized["body"],
-                    }
+                    recipients = extract_recipient_list(full_message)
+                    raw_email = build_inbound_raw_email(
+                        message_id=message_id,
+                        normalized=normalized,
+                        recipients=recipients,
+                    )
                     result = handle_inbound_stream(raw_email)
                     if result.get("skipped"):
                         continue
                     print(
-                        "Polled new Outlook inbox message into Lexi: "
+                        "Polled new Outlook message into Lexi: "
+                        f"folder={folder} "
                         f"proposal_id={result.get('proposal_id')} "
                         f"status={result.get('final_status')} "
+                        f"action={result.get('action')} "
                         f"subject={normalized['subject']}",
                         flush=True,
                     )
@@ -172,7 +185,7 @@ def _poll_recent_inbox(started_at: datetime) -> None:
                         flush=True,
                     )
     except Exception as exc:
-        print(f"Inbox poll failed: {type(exc).__name__}: {exc}", flush=True)
+        print(f"Inbox poll failed for folder={folder}: {type(exc).__name__}: {exc}", flush=True)
 
 
 def _extract_messages(data: Any) -> list[dict[str, Any]]:

@@ -8,7 +8,7 @@ import time
 import traceback
 from typing import Any
 
-from app.agents.scheduler_agent import process_proposal_schedule
+from app.agents.scheduler_agent import PENDING_TRIAGE, process_proposal_schedule
 from app.agents.triage_agent import NON_SCHEDULING_INTENTS, VALID_INTENTS
 from app.config import settings
 from app.llm.hermes_client import get_hermes_client
@@ -18,6 +18,7 @@ from app.storage.lexi_store import update_drafted_reply
 AWAITING_REPLY_PROMPT = "awaiting_reply_prompt"
 NO_REPLY_NEEDED = "no_reply_needed"
 PENDING_APPROVAL = "pending_approval"
+NEEDS_SCHEDULING_GUIDANCE = "needs_scheduling_guidance"
 
 SCHEDULING_INTENTS = frozenset(VALID_INTENTS) - NON_SCHEDULING_INTENTS
 
@@ -25,6 +26,207 @@ SCHEDULING_INTENTS = frozenset(VALID_INTENTS) - NON_SCHEDULING_INTENTS
 def is_scheduling_intent(intent: str | None) -> bool:
     """True when begin_draft_reply should run the scheduler (slots + holds)."""
     return (intent or "unknown").strip().lower() in SCHEDULING_INTENTS
+
+
+def should_run_scheduler_for_bundle(bundle: dict[str, Any]) -> bool:
+    """Route to slot engine when intent or email content is clearly scheduling."""
+    from app.scheduling.meeting_type import should_run_scheduler
+
+    return should_run_scheduler(
+        intent=str(bundle.get("intent_classification") or ""),
+        subject=str(bundle.get("subject") or ""),
+        body=str(bundle.get("raw_body") or ""),
+    )
+
+
+def _ensure_scheduling_intent_on_proposal(proposal_id: int, bundle: dict[str, Any]) -> str:
+    """Persist corrected intent when email content overrides mis-triage."""
+    from app.scheduling.meeting_type import effective_scheduling_intent
+
+    current = str(bundle.get("intent_classification") or "unknown").lower()
+    subject = str(bundle.get("subject") or "")
+    body = str(bundle.get("raw_body") or "")
+    corrected = effective_scheduling_intent(current, subject=subject, body=body)
+    if corrected in {"non_scheduling", "unknown"} and should_run_scheduler_for_bundle(bundle):
+        corrected = "referral_or_intro"
+    priority = str(bundle.get("priority_tier") or "medium").lower()
+    if should_run_scheduler_for_bundle(bundle) and priority == "low":
+        priority = "medium"
+    if corrected == current and priority == str(bundle.get("priority_tier") or "medium").lower():
+        return current
+    with get_lexi_connection() as conn:
+        conn.execute(
+            """
+            UPDATE proposals
+            SET intent_classification = ?, priority_tier = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (corrected, priority, proposal_id),
+        )
+        conn.commit()
+    return corrected
+
+
+def _latest_scheduler_failure(proposal_id: int) -> str:
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT payload FROM audit_log
+            WHERE reference_id = ? AND step_name = 'scheduler_engine' AND log_level = 'ERROR'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (str(proposal_id),),
+        ).fetchone()
+    if not row or not row["payload"]:
+        return ""
+    try:
+        payload = json.loads(str(row["payload"]))
+    except (TypeError, json.JSONDecodeError):
+        return ""
+    return str(payload.get("error") or "")
+
+
+def humanize_scheduler_failure(error: str, *, intent: str = "") -> str:
+    """One plain sentence for Kory when slot search fails."""
+    text = (error or "").strip()
+    if text.startswith("I couldn't find"):
+        return text.split(" Engine diagnostics:")[0].strip()
+    text_lower = text.lower()
+    label = {
+        "coffee": "a coffee slot",
+        "referral_or_intro": "an intro slot",
+        "pitch": "a meeting slot",
+        "new_client": "a meeting slot",
+        "happy_hour": "a happy hour slot",
+        "dinner_request": "a dinner slot",
+        "lunch_request": "a lunch slot",
+        "podcast": "a recording slot",
+    }.get((intent or "").strip().lower(), "a slot")
+
+    if "calendar unavailable" in text_lower or "could not read" in text_lower:
+        return "I can't read the calendar right now."
+    if "this week" in text_lower:
+        return f"I couldn't find {label} this week."
+    if "next week" in text_lower or "insufficient_slots" in text_lower or "no valid meeting slots" in text_lower:
+        return f"I couldn't find {label} next week. Should I try a different week?"
+    return f"I couldn't find {label} in that window. Should I try a different week?"
+
+
+def _set_needs_scheduling_guidance(
+    proposal_id: int,
+    *,
+    reason: str,
+    clear_draft: bool = True,
+    suggested_guidance: str | None = None,
+) -> None:
+    with get_lexi_connection() as conn:
+        if clear_draft:
+            conn.execute(
+                """
+                UPDATE proposals
+                SET status = ?, drafted_reply = NULL, proposed_slots = NULL,
+                    teams_approval_notified_at = NULL,
+                    scheduling_note = ?,
+                    kory_scheduling_guidance = COALESCE(?, kory_scheduling_guidance),
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (NEEDS_SCHEDULING_GUIDANCE, reason, suggested_guidance, proposal_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE proposals
+                SET status = ?, teams_approval_notified_at = NULL,
+                    scheduling_note = ?,
+                    kory_scheduling_guidance = COALESCE(?, kory_scheduling_guidance),
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (NEEDS_SCHEDULING_GUIDANCE, reason, suggested_guidance, proposal_id),
+            )
+        _audit(
+            conn,
+            proposal_id,
+            "scheduling_needs_guidance",
+            reason or "Scheduler could not find valid slots after delegation.",
+        )
+        conn.commit()
+
+
+def notify_kory_scheduling_blocked(proposal_id: int, *, reason: str = "") -> None:
+    """Blocked scheduling — escalate to Heidi first (optional Kory Teams ping if enabled)."""
+    from app.scheduling.heidi_escalation import escalate_to_heidi
+
+    bundle = _fetch_proposal_bundle(proposal_id) or {}
+    intent = str(bundle.get("intent_classification") or "")
+    failure = _latest_scheduler_failure(proposal_id)
+    failure_text = (reason or "").strip() or humanize_scheduler_failure(failure, intent=intent)
+    escalate_to_heidi(proposal_id, reason=failure_text, failure_error=failure_text)
+
+
+def _extract_suggested_guidance(reason: str) -> str | None:
+    import re
+
+    match = re.search(r"\bI can (offer the [^—?.]+)", reason or "", re.I)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def retry_scheduling_with_guidance(proposal_id: int, guidance: str) -> dict[str, Any]:
+    """Apply Kory's Teams guidance and re-run the scheduler."""
+    guidance = (guidance or "").strip()
+    bundle = _fetch_proposal_bundle(proposal_id)
+    if not bundle:
+        return {"ok": False, "error": f"Proposal {proposal_id} not found."}
+    if not guidance:
+        stored = str(bundle.get("kory_scheduling_guidance") or "").strip()
+        if stored:
+            guidance = stored
+        else:
+            return {"ok": False, "error": "guidance cannot be empty."}
+    if bundle["status"] not in {NEEDS_SCHEDULING_GUIDANCE, AWAITING_REPLY_PROMPT, PENDING_APPROVAL}:
+        return {
+            "ok": False,
+            "error": (
+                f"Proposal {proposal_id} is not awaiting scheduling guidance "
+                f"(status={bundle['status']})."
+            ),
+        }
+
+    with get_lexi_connection() as conn:
+        conn.execute(
+            """
+            UPDATE proposals
+            SET kory_scheduling_guidance = ?, status = ?, drafted_reply = NULL,
+                proposed_slots = NULL, teams_approval_notified_at = NULL,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (guidance, PENDING_TRIAGE, proposal_id),
+        )
+        _audit(conn, proposal_id, "scheduling_guidance_applied", guidance)
+        conn.commit()
+
+    scheduled = process_proposal_schedule(proposal_id)
+    if scheduled:
+        from app.bot.teams_publisher import schedule_teams_approval_push
+
+        schedule_teams_approval_push(proposal_id, force=True)
+        return {
+            "ok": True,
+            "proposal_id": proposal_id,
+            "status": PENDING_APPROVAL,
+            "message": "Found times — approval card is ready.",
+            "kory_message": "I found times — review the card when you can.",
+        }
+
+    from app.scheduling.heidi_escalation import escalate_to_heidi
+
+    failure = _latest_scheduler_failure(proposal_id)
+    summary = humanize_scheduler_failure(failure, intent=str(bundle.get("intent_classification") or ""))
+    return escalate_to_heidi(proposal_id, reason=summary, failure_error=summary)
 
 def _general_reply_system_prompt(
     *,
@@ -54,8 +256,8 @@ Return ONLY a valid JSON object with exactly one key:
 
 Rules:
 - Use proper paragraph spacing (blank line between paragraphs).
+- When the recipient timezone is unknown, say so clearly and list times in Mountain Time with ET/CT/PT equivalents in parentheses.
 - Do not invent calendar times unless the email is clearly about scheduling.
-- If unsure about intent, meeting type, or recipient timezone → ask a clarifying question; never assume timezone.
 - Do not include markdown fences or text outside the JSON object."""
 
 
@@ -118,88 +320,162 @@ def set_proposal_delegation_metadata(
     voice_mode: str,
     send_channel: str,
     is_delegation: bool,
+    reply_message_id: str | None = None,
 ) -> None:
     with get_lexi_connection() as conn:
-        conn.execute(
-            """
-            UPDATE proposals
-            SET voice_mode = ?, send_channel = ?, is_delegation = ?, updated_at = datetime('now')
-            WHERE id = ?
-            """,
-            (
-                voice_mode,
-                send_channel,
-                1 if is_delegation else 0,
-                proposal_id,
-            ),
-        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(proposals)").fetchall()}
+        if reply_message_id and "reply_message_id" in columns:
+            conn.execute(
+                """
+                UPDATE proposals
+                SET voice_mode = ?, send_channel = ?, is_delegation = ?,
+                    reply_message_id = COALESCE(?, reply_message_id),
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (
+                    voice_mode,
+                    send_channel,
+                    1 if is_delegation else 0,
+                    reply_message_id.strip() or None,
+                    proposal_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE proposals
+                SET voice_mode = ?, send_channel = ?, is_delegation = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (
+                    voice_mode,
+                    send_channel,
+                    1 if is_delegation else 0,
+                    proposal_id,
+                ),
+            )
         conn.commit()
 
 
 def begin_delegation_draft(proposal_id: int) -> dict[str, Any]:
     """Auto-draft after Kory CCs Lexi / delegates (skips awaiting_reply_prompt gate)."""
-    bundle = _fetch_proposal_bundle(proposal_id)
-    if not bundle:
-        return {"ok": False, "error": f"Proposal {proposal_id} not found."}
-    status = bundle.get("status")
-    if status not in {AWAITING_REPLY_PROMPT, PENDING_APPROVAL}:
-        return {
-            "ok": False,
-            "error": f"Proposal {proposal_id} cannot auto-draft (status={status}).",
-        }
+    import logging
 
-    intent = (bundle.get("intent_classification") or "unknown").lower()
-    voice_mode = (bundle.get("voice_mode") or "lexi").lower()
-    if intent in SCHEDULING_INTENTS:
-        scheduled = process_proposal_schedule(proposal_id)
-        if scheduled:
-            result = {
-                "ok": True,
-                "proposal_id": proposal_id,
-                "status": PENDING_APPROVAL,
-                "path": "delegation_scheduling",
-                "voice_mode": voice_mode,
-                "send_channel": bundle.get("send_channel") or "lexi",
-                "message": "Delegation scheduling draft staged for Teams approval.",
+    from app.scheduling.heidi_escalation import escalate_to_heidi
+    from app.scheduling.hermes_task import run_delegation_scheduling_task
+
+    logger = logging.getLogger(__name__)
+    try:
+        bundle = _fetch_proposal_bundle(proposal_id)
+        if not bundle:
+            return {"ok": False, "error": f"Proposal {proposal_id} not found."}
+        status = bundle.get("status")
+        if status not in {AWAITING_REPLY_PROMPT, PENDING_APPROVAL}:
+            return {
+                "ok": False,
+                "error": f"Proposal {proposal_id} cannot auto-draft (status={status}).",
             }
-            _maybe_push_teams_approval(proposal_id)
-            return _attach_draft_verification(result, proposal_id)
 
-    general = _draft_general_reply(bundle, voice_mode=voice_mode)
-    if not general.get("ok"):
-        return general
-    _set_pending_approval(
-        proposal_id,
-        general["drafted_reply"],
-        general.get("confidence_score", 0.5),
-        voice_mode=voice_mode,
-    )
-    _maybe_push_teams_approval(proposal_id)
-    result = {
-        "ok": True,
-        "proposal_id": proposal_id,
-        "status": PENDING_APPROVAL,
-        "path": "delegation_general",
-        "voice_mode": voice_mode,
-        "drafted_reply": general["drafted_reply"],
-        "message": "Lexi delegation draft ready for Teams approval.",
-    }
-    return _attach_draft_verification(result, proposal_id)
+        _ensure_scheduling_intent_on_proposal(proposal_id, bundle)
+        bundle = _fetch_proposal_bundle(proposal_id) or bundle
+
+        if should_run_scheduler_for_bundle(bundle):
+            result = run_delegation_scheduling_task(proposal_id, bundle)
+            if result.get("ok") and result.get("status") == PENDING_APPROVAL:
+                return _attach_draft_verification(result, proposal_id)
+            return result
+
+        voice_mode = (bundle.get("voice_mode") or "lexi").lower()
+        general = _draft_general_reply(bundle, voice_mode=voice_mode)
+        if not general.get("ok"):
+            return general
+        _set_pending_approval(
+            proposal_id,
+            general["drafted_reply"],
+            general.get("confidence_score", 0.5),
+            voice_mode=voice_mode,
+        )
+        result = {
+            "ok": True,
+            "proposal_id": proposal_id,
+            "status": PENDING_APPROVAL,
+            "path": "delegation_general",
+            "voice_mode": voice_mode,
+            "drafted_reply": general["drafted_reply"],
+            "message": "Lexi delegation draft ready for Teams approval.",
+        }
+        return _attach_draft_verification(result, proposal_id)
+    except Exception as exc:
+        logger.exception("Delegation draft failed for proposal %s", proposal_id)
+        return escalate_to_heidi(
+            proposal_id,
+            failure_error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def find_proposal_by_subject(subject_contains: str) -> dict[str, Any] | None:
+    """Latest triaged proposal whose email subject matches (for Kory chat-initiated drafts)."""
+    needle = (subject_contains or "").strip().lower()
+    if not needle:
+        return None
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                p.id AS proposal_id,
+                p.status,
+                p.intent_classification,
+                e.subject,
+                e.sender
+            FROM proposals AS p
+            INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+            WHERE lower(e.subject) LIKE ?
+            ORDER BY p.id DESC
+            LIMIT 1
+            """,
+            (f"%{needle}%",),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _reactivate_proposal_for_chat_draft(proposal_id: int) -> None:
+    with get_lexi_connection() as conn:
+        conn.execute(
+            """
+            UPDATE proposals
+            SET status = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (AWAITING_REPLY_PROMPT, proposal_id),
+        )
+        conn.commit()
+
+
+_CHAT_DRAFTABLE_STATUSES = frozenset(
+    {AWAITING_REPLY_PROMPT, NO_REPLY_NEEDED, NEEDS_SCHEDULING_GUIDANCE}
+)
 
 
 def begin_draft_reply(proposal_id: int, *, voice_mode: str = "") -> dict[str, Any]:
-    """After Kory says yes: draft reply (scheduling path with holds, or general reply)."""
+    """After Kory asks in chat (or says yes on prompt): draft with slots when scheduling."""
     bundle = _fetch_proposal_bundle(proposal_id)
     if not bundle:
         return {"ok": False, "error": f"Proposal {proposal_id} not found."}
-    if bundle["status"] != AWAITING_REPLY_PROMPT:
+    status = str(bundle.get("status") or "")
+    if status not in _CHAT_DRAFTABLE_STATUSES:
         return {
             "ok": False,
             "error": (
-                f"Proposal {proposal_id} is not awaiting reply prompt "
-                f"(status={bundle['status']})."
+                f"Proposal {proposal_id} is not ready for a new draft (status={status})."
             ),
         }
+    if status in {NO_REPLY_NEEDED, NEEDS_SCHEDULING_GUIDANCE}:
+        _reactivate_proposal_for_chat_draft(proposal_id)
+        bundle = _fetch_proposal_bundle(proposal_id) or bundle
+
+    if not voice_mode.strip():
+        voice_mode = str(bundle.get("voice_mode") or "kory")
 
     if voice_mode.strip():
         set_proposal_delegation_metadata(
@@ -210,9 +486,10 @@ def begin_draft_reply(proposal_id: int, *, voice_mode: str = "") -> dict[str, An
         )
         bundle = _fetch_proposal_bundle(proposal_id) or bundle
 
-    intent = (bundle.get("intent_classification") or "unknown").lower()
+    intent = _ensure_scheduling_intent_on_proposal(proposal_id, bundle)
+    bundle = _fetch_proposal_bundle(proposal_id) or bundle
     result: dict[str, Any] | None = None
-    if intent in SCHEDULING_INTENTS:
+    if should_run_scheduler_for_bundle(bundle):
         scheduled = process_proposal_schedule(proposal_id)
         if scheduled:
             result = {
@@ -220,34 +497,21 @@ def begin_draft_reply(proposal_id: int, *, voice_mode: str = "") -> dict[str, An
                 "proposal_id": proposal_id,
                 "status": PENDING_APPROVAL,
                 "path": "scheduling",
-                "message": (
-                    "Drafted scheduling reply with time options and calendar holds. "
-                    "Show Kory the full draft; ask for changes before sending."
-                ),
+                "message": "Draft ready on the approval card.",
+                "kory_message": "Draft is ready — review the times on the card.",
             }
         else:
-            general = _draft_general_reply(
-                bundle,
-                voice_mode=str(bundle.get("voice_mode") or voice_mode or "kory"),
-            )
-            if not general.get("ok"):
-                return general
-            _set_pending_approval(
-                proposal_id,
-                general["drafted_reply"],
-                general.get("confidence_score", 0.5),
-                voice_mode=str(bundle.get("voice_mode") or voice_mode or "kory"),
-            )
-            result = {
-                "ok": True,
+            notify_kory_scheduling_blocked(proposal_id)
+            failure = _latest_scheduler_failure(proposal_id)
+            summary = humanize_scheduler_failure(failure, intent=intent)
+            bundle = _fetch_proposal_bundle(proposal_id) or {}
+            kory_msg = str(bundle.get("scheduling_note") or summary).strip()
+            return {
+                "ok": False,
                 "proposal_id": proposal_id,
-                "status": PENDING_APPROVAL,
-                "path": "general_fallback",
-                "drafted_reply": general["drafted_reply"],
-                "message": (
-                    "Scheduling slots could not be placed; drafted a general reply instead. "
-                    "Show Kory the draft and ask for changes before sending."
-                ),
+                "status": NEEDS_SCHEDULING_GUIDANCE,
+                "error": kory_msg,
+                "kory_message": kory_msg,
             }
     else:
         general = _draft_general_reply(
@@ -268,14 +532,74 @@ def begin_draft_reply(proposal_id: int, *, voice_mode: str = "") -> dict[str, An
             "status": PENDING_APPROVAL,
             "path": "general",
             "drafted_reply": general["drafted_reply"],
-            "message": "Draft ready. Show Kory the full text; ask for changes before sending.",
+            "message": "Draft ready on the approval card.",
+            "kory_message": "Draft is ready — review on the card.",
         }
 
-    if result and result.get("status") == PENDING_APPROVAL:
-        _maybe_push_teams_approval(proposal_id)
+    if result and result.get("ok") and result.get("status") == PENDING_APPROVAL:
+        from app.bot.teams_publisher import schedule_teams_approval_push
+
+        schedule_teams_approval_push(proposal_id, force=True)
     if result:
         result = _attach_draft_verification(result, proposal_id)
     return result or {"ok": False, "error": "Draft failed."}
+
+
+def draft_reply_for_subject(
+    subject_contains: str,
+    *,
+    voice_mode: str = "kory",
+) -> dict[str, Any]:
+    """Hermes path: find triaged email by subject fragment and draft (Kory chat, no CC Lexi)."""
+    match = find_proposal_by_subject(subject_contains)
+    if not match:
+        return {
+            "ok": False,
+            "error": f"No proposal found for subject containing '{subject_contains}'.",
+        }
+    result = begin_draft_reply(
+        int(match["proposal_id"]),
+        voice_mode=voice_mode or "kory",
+    )
+    if result.get("ok"):
+        result["subject"] = match.get("subject")
+        result["sender"] = match.get("sender")
+    return result
+
+
+def begin_reoffer_schedule(proposal_id: int) -> dict[str, Any]:
+    """After recipient declined times: find new slots and stage a fresh approval card."""
+    from app.agents.comms_agent import STATUS_PENDING_REOFFER
+
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM proposals WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": f"Proposal {proposal_id} not found."}
+        if row["status"] != STATUS_PENDING_REOFFER:
+            return {
+                "ok": False,
+                "error": f"Proposal {proposal_id} is not awaiting re-offer (status={row['status']}).",
+            }
+
+    scheduled = process_proposal_schedule(proposal_id)
+    if not scheduled:
+        return {
+            "ok": False,
+            "error": "Could not find new valid slots — check calendar or rules.",
+            "proposal_id": proposal_id,
+        }
+    from app.bot.teams_publisher import schedule_teams_approval_push
+
+    schedule_teams_approval_push(proposal_id, force=True)
+    return {
+        "ok": True,
+        "proposal_id": proposal_id,
+        "status": PENDING_APPROVAL,
+        "message": "New times drafted — review and send offer when ready.",
+    }
 
 
 def update_proposal_draft(proposal_id: int, drafted_reply: str) -> dict[str, Any]:
@@ -297,15 +621,6 @@ def update_proposal_draft(proposal_id: int, drafted_reply: str) -> dict[str, Any
             }
     update_drafted_reply(proposal_id, body)
     return {"ok": True, "proposal_id": proposal_id, "drafted_reply": body}
-
-
-def _maybe_push_teams_approval(proposal_id: int) -> None:
-    from app.config import settings
-
-    if settings.lexi_teams_enabled:
-        from app.bot.teams_publisher import schedule_teams_approval_push
-
-        schedule_teams_approval_push(proposal_id)
 
 
 def _set_pending_approval(
@@ -488,6 +803,8 @@ def _fetch_proposal_bundle(proposal_id: int) -> dict[str, Any] | None:
                 p.send_channel,
                 p.is_delegation,
                 p.drafted_reply,
+                p.scheduling_note,
+                p.kory_scheduling_guidance,
                 e.subject,
                 e.sender,
                 e.raw_body

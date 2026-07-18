@@ -9,10 +9,10 @@ personal_calendar: "Kory Master Calendar (ALL)"
 primary_calendar: "Calendar"
 default_write: "Calendar"
 
-# READ for busy/free (intelligence layer filters Master kid-only / duplicate copies)
+# READ for busy/free — Master + work Calendar; intelligence dedupes (copy) rows.
 default_read_for_conflicts:
-  - "Calendar"
   - "Kory Master Calendar (ALL)"
+  - "Calendar"
 
 # M365 group calendars — visible in Outlook sidebar but NOT on Composio today.
 # Lexi will flag these as unavailable until subscribed on Kory's Graph account.
@@ -60,3 +60,7 @@ write_by_intent:
   virtual_30: "Calendar"
   new_client: "Calendar"
   ifg_meeting: "IFG Team"
+  # Lexi does not create trainer/family blocks; if ever needed:
+  personal_kory: "Kory Master Calendar (ALL)"
+  trainer: "Kory Master Calendar (ALL)"
+  family_event: "Kory Master Calendar (ALL)"

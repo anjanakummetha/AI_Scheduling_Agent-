@@ -23,6 +23,7 @@ from app.agents.inbound_filter import evaluate_inbound_notification, normalize_s
 from app.agents.delegation import detect_delegation
 from app.agents.inbound_reply import (
     AWAITING_REPLY_PROMPT,
+    NEEDS_SCHEDULING_GUIDANCE,
     NO_REPLY_NEEDED,
     begin_delegation_draft,
     set_proposal_delegation_metadata,
@@ -39,6 +40,7 @@ from app.integrations.outlook_email import (
     build_inbound_raw_email,
     extract_recipient_list,
     get_message,
+    merge_list_message_fields,
     normalize_message,
 )
 from app.storage.lexi_db import get_lexi_connection
@@ -224,7 +226,21 @@ def _handle_inbound_stream_locked(raw_email: dict[str, Any]) -> dict[str, Any]:
     if not thread_id:
         raise ValueError("raw_email must include thread_id or outlook_message_id")
 
+    sender = str(raw_email.get("sender") or raw_email.get("sender_email") or "").strip()
+    subject = str(raw_email.get("subject") or "").strip()
+    body_preview = str(raw_email.get("raw_body") or raw_email.get("body") or "")
+
     if _thread_already_ingested(thread_id):
+        delegation_replay = detect_delegation(
+            subject=subject,
+            body=body_preview,
+            sender=sender,
+            raw_email=raw_email,
+        )
+        if delegation_replay.is_delegation:
+            followup = _handle_delegation_followup(raw_email, delegation_replay)
+            if followup:
+                return followup
         message = f"Thread {thread_id} already ingested; skipping duplicate ingress."
         logger.info(message)
         return {
@@ -243,10 +259,6 @@ def _handle_inbound_stream_locked(raw_email: dict[str, Any]) -> dict[str, Any]:
             "reason": message,
         }
 
-    sender = str(raw_email.get("sender") or raw_email.get("sender_email") or "").strip()
-    subject = str(raw_email.get("subject") or "").strip()
-    body_preview = str(raw_email.get("raw_body") or raw_email.get("body") or "")
-
     if _skip_inbound_for_local_test_mode(subject=subject):
         message = "Local Mac testing: only subjects containing TEST are processed."
         logger.info("%s subject=%s", message, subject)
@@ -255,6 +267,48 @@ def _handle_inbound_stream_locked(raw_email: dict[str, Any]) -> dict[str, Any]:
             "thread_id": thread_id,
             "reason": message,
             "action": "local_test_only",
+        }
+
+    from app.agents.lexi_mail_intent import handle_lexi_direct_mail, is_mail_to_lexi
+
+    if is_mail_to_lexi(raw_email):
+        direct = handle_lexi_direct_mail(raw_email)
+        if direct.get("handled"):
+            _record_polled_message_id(thread_id, raw_email)
+            return direct
+
+    from app.agents.lexi_thread_followup import try_handle_lexi_thread_followup
+
+    followup = try_handle_lexi_thread_followup(raw_email)
+    if followup and followup.get("action"):
+        _record_polled_message_id(thread_id, raw_email)
+        return followup
+
+    delegation_early = detect_delegation(
+        subject=subject,
+        body=body_preview,
+        sender=sender,
+        raw_email=raw_email,
+    )
+    if delegation_early.is_delegation:
+        followup = _handle_delegation_followup(raw_email, delegation_early)
+        if followup:
+            return followup
+
+    conversation_id = str(raw_email.get("conversation_id") or "").strip()
+    if conversation_id and _conversation_has_proposal(conversation_id):
+        _record_polled_message_id(thread_id, raw_email)
+        logger.info(
+            "Conversation %s already tracked — skipping duplicate triage for message %s.",
+            conversation_id,
+            thread_id,
+        )
+        return {
+            "skipped": True,
+            "thread_id": thread_id,
+            "conversation_id": conversation_id,
+            "reason": "Conversation already has a Lexi proposal.",
+            "action": "conversation_already_tracked",
         }
 
     if _duplicate_newsletter_burst(sender, subject, body_preview):
@@ -278,8 +332,25 @@ def _handle_inbound_stream_locked(raw_email: dict[str, Any]) -> dict[str, Any]:
             "action": "no_action",
         }
 
-    triage_status = _fetch_proposal_status(proposal_id) or AWAITING_REPLY_PROMPT
     bundle = _fetch_proposal_bundle(proposal_id) or {}
+    try:
+        from app.scheduling.introducer import resolve_introducer_for_contact
+        from app.storage.recipient_profiles import normalize_sender_email
+
+        guest = normalize_sender_email(str(bundle.get("sender") or sender))
+        if guest:
+            resolve_introducer_for_contact(
+                email=guest,
+                subject=subject,
+                body=body_preview,
+                sender=sender,
+                to_recipients=raw_email.get("to_recipients"),
+                cc_recipients=raw_email.get("cc_recipients"),
+            )
+    except Exception:
+        pass
+
+    triage_status = _fetch_proposal_status(proposal_id) or AWAITING_REPLY_PROMPT
     delegation = detect_delegation(
         subject=str(bundle.get("subject") or subject),
         body=str(bundle.get("raw_body") or raw_email.get("raw_body") or ""),
@@ -319,9 +390,12 @@ def _handle_inbound_stream_locked(raw_email: dict[str, Any]) -> dict[str, Any]:
             voice_mode="lexi",
             send_channel="lexi",
             is_delegation=True,
+            reply_message_id=str(
+                raw_email.get("message_id") or raw_email.get("thread_id") or ""
+            ),
         )
         draft_result = begin_delegation_draft(proposal_id)
-        scheduler_processed = bool(draft_result.get("ok"))
+        scheduler_processed = draft_result.get("status") == PENDING_APPROVAL
         final_status = str(draft_result.get("status") or final_status)
         logger.info(
             "Delegation auto-draft proposal %s (%s) → %s",
@@ -329,8 +403,21 @@ def _handle_inbound_stream_locked(raw_email: dict[str, Any]) -> dict[str, Any]:
             delegation.reason,
             final_status,
         )
-        if final_status == PENDING_APPROVAL and settings.lexi_teams_enabled:
+        if (
+            final_status == PENDING_APPROVAL
+            and settings.lexi_teams_enabled
+            and draft_result.get("ok")
+        ):
             schedule_teams_approval_push(proposal_id)
+        elif (
+            final_status in {NEEDS_SCHEDULING_GUIDANCE, "needs_heidi"}
+            and settings.lexi_teams_enabled
+        ):
+            logger.info(
+                "Scheduling blocked for proposal %s (status=%s).",
+                proposal_id,
+                final_status,
+            )
     elif final_status == AWAITING_REPLY_PROMPT and settings.lexi_teams_enabled and notification.notify:
         schedule_teams_reply_prompt_push(proposal_id)
     elif final_status == PENDING_APPROVAL:
@@ -470,6 +557,7 @@ def _run_daemon_cycle(cycle_number: int, interval_seconds: int = 30) -> int:
 
     processed += _recover_pending_triage()
     _run_hold_lifecycle()
+    _run_kory_briefings()
     if cycle_number % _db_maintenance_interval() == 0:
         _run_db_maintenance()
 
@@ -491,6 +579,22 @@ def _run_hold_lifecycle() -> None:
             step_name="hold_lifecycle",
             reference_id="daemon",
             message="Hold lifecycle cycle failed.",
+            exc=exc,
+        )
+
+
+def _run_kory_briefings() -> None:
+    try:
+        from app.jobs.kory_briefings import run_kory_briefing_cycle
+
+        result = run_kory_briefing_cycle()
+        if result.get("daily_briefing_sent") or result.get("kory_24h_reminders"):
+            logger.info("Kory briefings: %s", result)
+    except Exception as exc:
+        _log_orchestrator_error(
+            step_name="kory_briefings",
+            reference_id="daemon",
+            message="Kory briefing cycle failed.",
             exc=exc,
         )
 
@@ -544,12 +648,19 @@ def _recover_pending_triage() -> int:
 
 
 def _poll_outlook_ingress() -> int:
-    """Poll recent Outlook inbox messages and enqueue unseen threads for Lexi."""
+    """Poll Kory inbox + sent items for messages Composio triggers may miss locally."""
     if not settings.composio_api_key:
         return 0
 
     processed = 0
     window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+    for folder in ("inbox", "sentitems"):
+        processed += _poll_outlook_folder(folder, window_start=window_start)
+    return processed
+
+
+def _poll_outlook_folder(folder: str, *, window_start: datetime) -> int:
+    processed = 0
     try:
         from app.integrations.composio_client import execute_read_tool
 
@@ -557,7 +668,7 @@ def _poll_outlook_ingress() -> int:
             "OUTLOOK_LIST_MESSAGES",
             {
                 "user_id": "me",
-                "folder": "inbox",
+                "folder": folder,
                 "top": 15,
                 "orderby": ["receivedDateTime desc"],
                 "select": [
@@ -576,8 +687,8 @@ def _poll_outlook_ingress() -> int:
     except Exception as exc:
         _log_orchestrator_error(
             step_name="outlook_poll",
-            reference_id="inbox",
-            message="Outlook poll failed.",
+            reference_id=folder,
+            message=f"Outlook poll failed for folder={folder}.",
             exc=exc,
         )
         return 0
@@ -589,6 +700,10 @@ def _poll_outlook_ingress() -> int:
         if not message_id or _thread_already_ingested(message_id):
             continue
 
+        subject_preview = str(message.get("subject") or "")
+        if _skip_inbound_for_local_test_mode(subject=subject_preview):
+            continue
+
         received_at = _parse_received_at(message.get("receivedDateTime"))
         if received_at and received_at < window_start:
             continue
@@ -596,9 +711,10 @@ def _poll_outlook_ingress() -> int:
         log_id: str | None = None
         try:
             full_message, log_id = get_message(message_id)
+            full_message = merge_list_message_fields(full_message, message)
             normalized = normalize_message(
                 full_message,
-                {"source": "orchestrator_poll", "message_id": message_id},
+                {"source": "orchestrator_poll", "message_id": message_id, "folder": folder},
             )
             recipients = extract_recipient_list(full_message)
             raw_email = build_inbound_raw_email(
@@ -614,7 +730,7 @@ def _poll_outlook_ingress() -> int:
                 reference_id=message_id,
                 message="Outlook poller failed to process a message.",
                 exc=exc,
-                extra={"composio_log_id": log_id},
+                extra={"composio_log_id": log_id, "folder": folder},
             )
     return processed
 
@@ -686,6 +802,193 @@ def _skip_inbound_for_local_test_mode(*, subject: str) -> bool:
     if os.getenv("LEXI_LOCAL_MODE", "").strip().lower() not in {"1", "true", "yes"}:
         return False
     return "test" not in (subject or "").strip().lower()
+
+
+def _normalize_thread_subject(subject: str) -> str:
+    s = (subject or "").strip().lower()
+    while True:
+        if s.startswith("re:"):
+            s = s[3:].strip()
+        elif s.startswith("fwd:"):
+            s = s[4:].strip()
+        else:
+            break
+    return s
+
+
+def _find_proposal_for_delegation_followup(
+    *,
+    conversation_id: str,
+    subject: str,
+) -> int | None:
+    with get_lexi_connection() as conn:
+        if conversation_id:
+            row = conn.execute(
+                """
+                SELECT p.id
+                FROM proposals AS p
+                INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+                WHERE e.conversation_id = ?
+                ORDER BY p.id DESC
+                LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+            if row:
+                return int(row["id"])
+
+        norm = _normalize_thread_subject(subject)
+        if not norm:
+            return None
+        rows = conn.execute(
+            """
+            SELECT e.thread_id, e.subject
+            FROM email_threads AS e
+            ORDER BY e.id DESC
+            LIMIT 50
+            """
+        ).fetchall()
+        for row in rows:
+            if _normalize_thread_subject(str(row["subject"] or "")) != norm:
+                continue
+            prop = conn.execute(
+                """
+                SELECT id FROM proposals
+                WHERE thread_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (row["thread_id"],),
+            ).fetchone()
+            if prop:
+                return int(prop["id"])
+    return None
+
+
+def _update_proposal_conversation_id(proposal_id: int, conversation_id: str) -> None:
+    if not conversation_id.strip():
+        return
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            "SELECT thread_id FROM proposals WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if not row:
+            return
+        conn.execute(
+            """
+            UPDATE email_threads
+            SET conversation_id = COALESCE(conversation_id, ?)
+            WHERE thread_id = ?
+            """,
+            (conversation_id.strip(), row["thread_id"]),
+        )
+        conn.commit()
+
+
+def _reactivate_proposal_for_delegation(proposal_id: int) -> None:
+    with get_lexi_connection() as conn:
+        conn.execute(
+            """
+            UPDATE proposals
+            SET status = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (AWAITING_REPLY_PROMPT, proposal_id),
+        )
+        conn.commit()
+
+
+def _handle_delegation_followup(
+    raw_email: dict[str, Any],
+    delegation: Any,
+) -> dict[str, Any] | None:
+    """When Kory CCs Lexi on an existing thread, re-open the staged proposal."""
+    proposal_id = _find_proposal_for_delegation_followup(
+        conversation_id=str(raw_email.get("conversation_id") or ""),
+        subject=str(raw_email.get("subject") or ""),
+    )
+    if proposal_id is None:
+        return None
+
+    status = _fetch_proposal_status(proposal_id)
+    if status not in {NO_REPLY_NEEDED, AWAITING_REPLY_PROMPT}:
+        return None
+
+    _update_proposal_conversation_id(
+        proposal_id,
+        str(raw_email.get("conversation_id") or ""),
+    )
+    set_proposal_delegation_metadata(
+        proposal_id,
+        voice_mode="lexi",
+        send_channel="lexi",
+        is_delegation=True,
+        reply_message_id=str(raw_email.get("message_id") or raw_email.get("thread_id") or ""),
+    )
+    _reactivate_proposal_for_delegation(proposal_id)
+
+    draft_result = begin_delegation_draft(proposal_id)
+    final_status = str(draft_result.get("status") or _fetch_proposal_status(proposal_id) or "")
+
+    if (
+        final_status == PENDING_APPROVAL
+        and settings.lexi_teams_enabled
+        and draft_result.get("ok")
+    ):
+        schedule_teams_approval_push(proposal_id)
+
+    _record_polled_message_id(str(raw_email.get("message_id") or raw_email.get("thread_id") or ""), raw_email)
+
+    return {
+        "proposal_id": proposal_id,
+        "thread_id": raw_email.get("thread_id"),
+        "action": "delegation_followup",
+        "delegation_reason": delegation.reason,
+        "final_status": final_status,
+        "draft_result": draft_result,
+        "skipped": False,
+    }
+
+
+def _record_polled_message_id(message_id: str, raw_email: dict[str, Any]) -> None:
+    if not message_id.strip():
+        return
+    with get_lexi_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO email_threads
+            (thread_id, subject, sender, received_at, raw_body, conversation_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message_id.strip(),
+                str(raw_email.get("subject") or ""),
+                str(raw_email.get("sender") or ""),
+                str(raw_email.get("received_at") or ""),
+                str(raw_email.get("raw_body") or "")[:4000],
+                str(raw_email.get("conversation_id") or "").strip() or None,
+            ),
+        )
+        conn.commit()
+
+
+def _conversation_has_proposal(conversation_id: str) -> bool:
+    """True when any proposal exists for this Outlook conversation."""
+    if not conversation_id.strip():
+        return False
+    with get_lexi_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM proposals AS p
+            INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+            WHERE e.conversation_id = ?
+            LIMIT 1
+            """,
+            (conversation_id.strip(),),
+        ).fetchone()
+        return row is not None
 
 
 def _thread_has_active_proposal(thread_id: str) -> bool:

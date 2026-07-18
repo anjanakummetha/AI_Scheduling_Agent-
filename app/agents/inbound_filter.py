@@ -148,6 +148,13 @@ def evaluate_inbound_notification(
             auto_skip=True,
         )
 
+    if settings.lexi_teams_inbound_notify_mode == "delegation_and_followups":
+        return InboundNotificationDecision(
+            notify=False,
+            reason="delegation_and_followups_cold_inbound",
+            auto_skip=True,
+        )
+
     if is_no_reply_needed_mail(sender=sender, subject=subject, body=body):
         reason = "calendar_invite_response"
         if is_newsletter_or_bulk_mail(sender=sender, subject=subject, body=body):

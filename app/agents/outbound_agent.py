@@ -16,11 +16,13 @@ from app.config import settings
 from app.integrations.outlook_calendar import create_calendar_event
 from app.integrations.outlook_email import send_outbound_email
 from app.llm.hermes_client import get_hermes_client
+from app.rules.validators import filter_slots_by_rules
+from app.scheduling.calendar_intelligence import resolve_write_calendar_name
+from app.scheduling.email_format import build_scheduling_reply, sender_first_name
 from app.storage.lexi_db import get_lexi_connection
 
 PENDING_APPROVAL = "pending_approval"
 STATUS_EXECUTED = "executed"
-CALENDAR_SEARCH_DAYS = 14
 MAX_SLOT_OPTIONS = 3
 MIN_SLOT_OPTIONS = 2
 
@@ -98,7 +100,10 @@ def initiate_outbound_scheduling(
                 (thread_id, subject.strip(), recipient, received_at, outbound_context),
             )
 
-            calendar_context = _load_calendar_context()
+            calendar_context = _load_calendar_context(
+                subject=subject.strip(),
+                body=outbound_context,
+            )
             schedule = _build_outbound_schedule(
                 recipient_email=recipient,
                 subject=subject.strip(),
@@ -125,7 +130,7 @@ def initiate_outbound_scheduling(
                 duration_minutes=duration_minutes,
                 require_ceo_signoff=require_ceo_signoff,
             )
-            _insert_outbound_holds(conn, proposal_id, schedule.slots, intent)
+            # Holds are placed after Kory approves send (comms_agent send_offer).
 
             result["proposal_id"] = proposal_id
             result["slots"] = schedule.slots
@@ -205,8 +210,30 @@ def _build_outbound_schedule(
     authorized_by: str,
     calendar_context: dict[str, Any],
 ) -> OutboundScheduleResult:
+    from app.scheduling.slot_engine import propose_meeting_slots
+
+    engine = propose_meeting_slots(
+        calendar_context,
+        intent=meeting_intent,
+        subject=subject,
+        body=f"Outbound delegation by {authorized_by} for {duration_minutes} minutes.",
+    )
+    if len(engine.slots) >= MIN_SLOT_OPTIONS:
+        first_name = sender_first_name(recipient_email)
+        return OutboundScheduleResult(
+            slots=engine.slots[:MAX_SLOT_OPTIONS],
+            drafted_reply=build_scheduling_reply(
+                recipient_first_name=first_name,
+                slots=engine.slots[:MAX_SLOT_OPTIONS],
+                sender_email=recipient_email,
+                voice_mode="kory",
+            ),
+            confidence_score=0.92,
+            source="slot_engine",
+        )
+
     try:
-        return _call_outbound_llm(
+        llm = _call_outbound_llm(
             recipient_email=recipient_email,
             subject=subject,
             meeting_intent=meeting_intent,
@@ -214,17 +241,26 @@ def _build_outbound_schedule(
             authorized_by=authorized_by,
             calendar_context=calendar_context,
         )
+        llm.slots = _filter_non_conflicting_slots(llm.slots, calendar_context)
+        safe, _ = filter_slots_by_rules(
+            llm.slots,
+            intent=meeting_intent,
+            busy_events=calendar_context.get("busy_events"),
+        )
+        if len(safe) >= MIN_SLOT_OPTIONS:
+            llm.slots = safe[:MAX_SLOT_OPTIONS]
+            llm.source = "llm_validated"
+            return llm
     except Exception as exc:
         if calendar_context.get("status") != "available":
             raise RuntimeError(
-                "Outbound LLM scheduling failed and live calendar is unavailable."
+                "Outbound scheduling failed: no valid slots and calendar unavailable."
             ) from exc
-        return _fallback_outbound_schedule(
-            duration_minutes=duration_minutes,
-            meeting_intent=meeting_intent,
-            recipient_email=recipient_email,
-            error=exc,
-        )
+
+    raise ValueError(
+        "No valid outbound slots found for Kory's calendar and rules. "
+        f"Diagnostics: {engine.diagnostics}"
+    )
 
 
 def _call_outbound_llm(
@@ -497,6 +533,7 @@ def _insert_outbound_holds(
         slots=slots,
         intent_classification=meeting_intent,
         meeting_subject=f"Outbound {meeting_intent.replace('_', ' ')}",
+        calendar_name=resolve_write_calendar_name(intent=meeting_intent),
     )
 
 

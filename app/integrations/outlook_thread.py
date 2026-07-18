@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.integrations.composio_client import execute_read_tool
 from app.integrations.outlook_email import _plain_text
+
+logger = logging.getLogger(__name__)
+
+
+def extract_list_messages(data: Any) -> list[dict[str, Any]]:
+    """Normalize OUTLOOK_LIST_MESSAGES payloads."""
+    return _extract_messages(data)
 
 
 def _extract_messages(data: Any) -> list[dict[str, Any]]:
@@ -19,6 +27,26 @@ def _extract_messages(data: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _list_conversation_messages(
+    conversation_id: str,
+    *,
+    folder: str,
+    top: int = 25,
+) -> list[dict[str, Any]]:
+    result = execute_read_tool(
+        "OUTLOOK_LIST_MESSAGES",
+        {
+            "user_id": "me",
+            "folder": folder,
+            "top": top,
+            "orderby": ["receivedDateTime desc"],
+            "select": ["id", "subject", "from", "receivedDateTime", "bodyPreview", "conversationId"],
+            "filter": f"conversationId eq '{conversation_id}'",
+        },
+    )
+    return _extract_messages(result.get("data"))
+
+
 def fetch_conversation_context(
     conversation_id: str,
     *,
@@ -29,27 +57,27 @@ def fetch_conversation_context(
     if not conversation_id.strip():
         return ""
 
-    try:
-        result = execute_read_tool(
-            "OUTLOOK_LIST_MESSAGES",
-            {
-                "user_id": "me",
-                "folder": "inbox",
-                "top": 25,
-                "orderby": ["receivedDateTime desc"],
-                "select": ["id", "subject", "from", "receivedDateTime", "bodyPreview", "conversationId"],
-                "filter": f"conversationId eq '{conversation_id}'",
-            },
-        )
-        messages = _extract_messages(result.get("data"))
-    except Exception:
-        return ""
+    messages: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for folder in ("inbox", "sentitems"):
+        try:
+            for message in _list_conversation_messages(conversation_id, folder=folder):
+                mid = str(message.get("id") or "")
+                if mid and mid in seen_ids:
+                    continue
+                if mid:
+                    seen_ids.add(mid)
+                messages.append(message)
+        except Exception as exc:
+            logger.debug("Thread context fetch failed for folder=%s: %s", folder, exc)
 
     if not messages:
         return ""
 
+    messages.sort(key=lambda m: str(m.get("receivedDateTime") or ""))
+
     blocks: list[str] = []
-    for message in messages:
+    for message in reversed(messages):
         mid = str(message.get("id") or "")
         if exclude_message_id and mid == exclude_message_id:
             continue

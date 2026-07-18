@@ -1,0 +1,280 @@
+"""Follow-up emails on threads where Lexi is already involved — context-aware Teams pings."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from app.config import settings
+from app.storage.lexi_db import get_lexi_connection
+
+logger = logging.getLogger(__name__)
+
+LEXI_INVOLVED_STATUSES = (
+    "offer_sent",
+    "pending_invite",
+    "pending_reoffer",
+    "pending_approval",
+    "needs_heidi",
+    "executed",
+    "awaiting_reply_prompt",
+)
+
+
+def try_handle_lexi_thread_followup(raw_email: dict[str, Any]) -> dict[str, Any] | None:
+    """Route recipient follow-ups on Lexi-involved threads before cold inbound triage."""
+    conversation_id = str(raw_email.get("conversation_id") or "").strip()
+    sender = str(raw_email.get("sender") or raw_email.get("sender_email") or "").strip().lower()
+    subject = str(raw_email.get("subject") or "").strip()
+    body = str(raw_email.get("raw_body") or raw_email.get("body") or "")
+
+    if not body.strip():
+        return None
+
+    if _is_kory_sender(sender):
+        return None
+
+    proposal = _find_lexi_involved_proposal(conversation_id, subject=subject)
+    if not proposal:
+        return None
+
+    from app.agents.offer_reply import try_handle_recipient_slot_reply
+
+    offer_result = try_handle_recipient_slot_reply(raw_email)
+    if offer_result and offer_result.get("action") in {
+        "recipient_slot_selected",
+        "recipient_reoffer_request",
+    }:
+        return offer_result
+
+    if offer_result and offer_result.get("action") == "offer_reply_unparsed":
+        return _handle_unparsed_followup(raw_email, proposal, body=body, prior=offer_result)
+
+    inbound_result = _try_inbound_time_suggestion(raw_email, proposal, body=body)
+    if inbound_result:
+        return inbound_result
+
+    return _handle_generic_lexi_followup(raw_email, proposal, body=body)
+
+
+def _try_inbound_time_suggestion(
+    raw_email: dict[str, Any],
+    proposal: dict[str, Any],
+    *,
+    body: str,
+) -> dict[str, Any] | None:
+    """Prospect proposes a specific time — validate calendar and notify Kory."""
+    from app.scheduling.inbound_availability import (
+        body_looks_like_inbound_availability,
+        extract_inbound_time_candidates,
+        validate_inbound_candidates,
+    )
+    from app.scheduling.calendar_context import load_scheduling_calendar_context
+
+    if not body_looks_like_inbound_availability(body):
+        return None
+
+    candidates = extract_inbound_time_candidates(body)
+    if not candidates:
+        return None
+
+    subject = str(proposal.get("subject") or raw_email.get("subject") or "")
+    try:
+        calendar_context = load_scheduling_calendar_context(subject=subject, body=body)
+    except Exception:
+        return None
+
+    if calendar_context.get("status") != "available":
+        return None
+
+    intent = str(proposal.get("intent_classification") or "")
+    validated, invalid, notes = validate_inbound_candidates(
+        candidates,
+        calendar_context=calendar_context,
+        intent=intent,
+        subject=subject,
+        body=body,
+    )
+    if not validated:
+        reason = "; ".join(notes[:2]) if notes else "Calendar conflict or rules violation."
+        summary = (
+            f"**{subject}** — they suggested a time but it doesn't fit: {reason} "
+            f"Should I draft new options?"
+        )
+        _notify_kory_followup(int(proposal["proposal_id"]), summary=summary, kind="inbound_time_blocked")
+        return {
+            "ok": True,
+            "action": "inbound_time_blocked",
+            "proposal_id": proposal.get("proposal_id"),
+            "message": summary,
+        }
+
+    slot = validated[0]
+    from app.agents.comms_agent import mark_recipient_slot_choice
+
+    pick = mark_recipient_slot_choice(
+        int(proposal["proposal_id"]),
+        slot,
+        reply_body=body,
+    )
+    if pick.get("ok") and settings.lexi_teams_enabled:
+        from app.bot.teams_publisher import schedule_teams_invite_prompt_push
+
+        schedule_teams_invite_prompt_push(int(proposal["proposal_id"]))
+
+    summary = (
+        f"**{subject}** — they suggested a time and your calendar looks free. "
+        f"Invite card is ready."
+    )
+    return {
+        "ok": pick.get("ok", False),
+        "action": "inbound_time_suggested",
+        "proposal_id": proposal.get("proposal_id"),
+        "selected_slot": slot,
+        "status": pick.get("status"),
+        "message": summary,
+    }
+
+
+def _handle_unparsed_followup(
+    raw_email: dict[str, Any],
+    proposal: dict[str, Any],
+    *,
+    body: str,
+    prior: dict[str, Any],
+) -> dict[str, Any]:
+    sender = str(proposal.get("sender") or "them")
+    subject = str(proposal.get("subject") or "(no subject)")
+    preview = body.strip().split("\n")[0][:120]
+    summary = (
+        f"**{subject}** — {sender} replied and I couldn't auto-parse it:\n"
+        f"\"{preview}\"\n\n"
+        f"Should I draft a follow-up or confirm a time?"
+    )
+    _notify_kory_followup(int(proposal["proposal_id"]), summary=summary, kind="unparsed_reply")
+    return {
+        **prior,
+        "kory_notified": True,
+        "message": summary,
+    }
+
+
+def _handle_generic_lexi_followup(
+    raw_email: dict[str, Any],
+    proposal: dict[str, Any],
+    *,
+    body: str,
+) -> dict[str, Any] | None:
+    status = str(proposal.get("status") or "")
+    is_delegation = bool(proposal.get("is_delegation"))
+    notify_statuses = {
+        "pending_approval",
+        "needs_heidi",
+        "offer_sent",
+        "pending_invite",
+        "pending_reoffer",
+    }
+    if status not in notify_statuses:
+        return None
+    if not is_delegation and status not in {"offer_sent", "pending_invite", "pending_reoffer"}:
+        return None
+
+    sender = str(proposal.get("sender") or "them")
+    subject = str(proposal.get("subject") or "(no subject)")
+    preview = body.strip().split("\n")[0][:120]
+    summary = (
+        f"**{subject}** — new reply from {sender} on a thread Lexi is handling:\n"
+        f"\"{preview}\"\n\n"
+        f"Status: {status.replace('_', ' ')}."
+    )
+    _notify_kory_followup(int(proposal["proposal_id"]), summary=summary, kind="thread_update")
+    return {
+        "ok": True,
+        "action": "lexi_thread_followup",
+        "proposal_id": proposal.get("proposal_id"),
+        "status": status,
+        "message": summary,
+    }
+
+
+def _notify_kory_followup(proposal_id: int, *, summary: str, kind: str) -> None:
+    if not settings.lexi_teams_enabled:
+        return
+    from app.bot.teams_publisher import schedule_teams_scheduling_guidance_push
+
+    schedule_teams_scheduling_guidance_push(proposal_id, summary=summary, force=True)
+    logger.info("Lexi thread follow-up Teams ping (%s) for proposal %s", kind, proposal_id)
+
+
+def _find_lexi_involved_proposal(
+    conversation_id: str,
+    *,
+    subject: str = "",
+) -> dict[str, Any] | None:
+    placeholders = ",".join("?" * len(LEXI_INVOLVED_STATUSES))
+    with get_lexi_connection() as conn:
+        if conversation_id:
+            row = conn.execute(
+                f"""
+                SELECT
+                    p.id AS proposal_id,
+                    p.status,
+                    p.proposed_slots,
+                    p.intent_classification,
+                    p.is_delegation,
+                    e.sender,
+                    e.subject
+                FROM proposals AS p
+                INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+                WHERE p.status IN ({placeholders})
+                  AND e.conversation_id = ?
+                ORDER BY p.id DESC
+                LIMIT 1
+                """,
+                (*LEXI_INVOLVED_STATUSES, conversation_id),
+            ).fetchone()
+            if row:
+                return dict(row)
+
+        norm = _normalize_subject(subject)
+        if norm:
+            row = conn.execute(
+                f"""
+                SELECT
+                    p.id AS proposal_id,
+                    p.status,
+                    p.proposed_slots,
+                    p.intent_classification,
+                    p.is_delegation,
+                    e.sender,
+                    e.subject
+                FROM proposals AS p
+                INNER JOIN email_threads AS e ON e.thread_id = p.thread_id
+                WHERE p.status IN ({placeholders})
+                  AND lower(replace(replace(e.subject, 'Re: ', ''), 'RE: ', '')) LIKE ?
+                ORDER BY p.id DESC
+                LIMIT 1
+                """,
+                (*LEXI_INVOLVED_STATUSES, f"%{norm[:60]}%"),
+            ).fetchone()
+            if row:
+                return dict(row)
+    return None
+
+
+def _normalize_subject(subject: str) -> str:
+    s = (subject or "").strip().lower()
+    while s.startswith("re:") or s.startswith("fwd:"):
+        s = s.split(":", 1)[1].strip()
+    return s
+
+
+def _is_kory_sender(sender: str) -> bool:
+    from app.config import settings
+
+    addr = (sender or "").strip().lower()
+    if not addr:
+        return False
+    if addr in {e.lower() for e in settings.kory_sender_emails}:
+        return True
+    return any(domain in addr for domain in ("@iconicfounders.com", "@ifg.vc"))

@@ -94,8 +94,22 @@ def lexi_get_inbound_reply_queue() -> str:
 
 
 @mcp.tool()
+def lexi_draft_reply_for_email(subject_contains: str, voice_mode: str = "kory") -> str:
+    """Kory asked in chat to draft a reply (no CC Lexi). Finds email by subject fragment, slots + card.
+
+    voice_mode: kory (default) or lexi. Reply to Kory with kory_message only.
+    """
+    return _wrap(
+        "lexi_draft_reply_for_email",
+        lexi.draft_reply_for_subject_action,
+        subject_contains=subject_contains.strip(),
+        voice_mode=voice_mode.strip() or "kory",
+    )
+
+
+@mcp.tool()
 def lexi_begin_draft_reply(proposal_id: str, voice_mode: str = "kory") -> str:
-    """After Kory says yes (or chat draft): draft reply. voice_mode: kory | lexi."""
+    """After Kory says yes (or chat draft): draft reply. voice_mode: kory | lexi. Quote kory_message to Kory."""
     try:
         pid = int(proposal_id)
     except ValueError:
@@ -105,6 +119,73 @@ def lexi_begin_draft_reply(proposal_id: str, voice_mode: str = "kory") -> str:
         lexi.begin_draft_reply_action,
         proposal_id=pid,
         voice_mode=voice_mode.strip() or "kory",
+    )
+
+
+@mcp.tool()
+def lexi_get_scheduling_context(proposal_id: str) -> str:
+    """Facts packet for a proposal: thread, meeting type, slots, rules, voice — for Hermes compose."""
+    try:
+        pid = int(proposal_id)
+    except ValueError:
+        return _error("proposal_id must be an integer string.", code="validation_error")
+    return _wrap(
+        "lexi_get_scheduling_context",
+        lexi.get_scheduling_context_action,
+        proposal_id=pid,
+    )
+
+
+@mcp.tool()
+def lexi_escalate_to_heidi(proposal_id: str, reason: str = "") -> str:
+    """Email Heidi when scheduling cannot be completed (issue + briefing). Staged when LEXI_DRY_RUN=true."""
+    try:
+        pid = int(proposal_id)
+    except ValueError:
+        return _error("proposal_id must be an integer string.", code="validation_error")
+    return _wrap(
+        "lexi_escalate_to_heidi",
+        lexi.escalate_to_heidi_action,
+        proposal_id=pid,
+        reason=(reason or "").strip(),
+    )
+
+
+@mcp.tool()
+def lexi_retry_scheduling(proposal_id: str, guidance: str) -> str:
+    """Re-search times after Kory gives a different week/window. Reply to Kory with kory_message only — one or two plain sentences."""
+    try:
+        pid = int(proposal_id)
+    except ValueError:
+        return _error("proposal_id must be an integer string.", code="validation_error")
+    if not (guidance or "").strip():
+        return _error("guidance is required.", code="validation_error")
+    return _wrap(
+        "lexi_retry_scheduling",
+        lexi.retry_scheduling_with_guidance_action,
+        proposal_id=pid,
+        guidance=guidance.strip(),
+    )
+
+
+@mcp.tool()
+def lexi_begin_reoffer(proposal_id: str) -> str:
+    """After recipient declined offered times: find new slots and stage approval card."""
+    try:
+        pid = int(proposal_id)
+    except ValueError:
+        return _error("proposal_id must be an integer string.", code="validation_error")
+    return _wrap("lexi_begin_reoffer", lexi.begin_reoffer_action, proposal_id=pid)
+
+
+@mcp.tool()
+def lexi_recipient_timezone(sender_email: str = "", body: str = "") -> str:
+    """Detect recipient timezone from domain, body cues, or email headers (never assumes)."""
+    return _wrap(
+        "lexi_recipient_timezone",
+        lexi.recipient_timezone_action,
+        sender_email=sender_email,
+        body=body,
     )
 
 
@@ -169,7 +250,7 @@ def lexi_preview_scheduling_email() -> str:
 
 @mcp.tool()
 def lexi_get_system_status() -> str:
-    """Lexi runtime status: dry_run, Composio, pending approval count, worker mode."""
+    """Lexi runtime status (internal). Tell Kory only the kory_brief field — never outlook_timezone or connection IDs."""
     from app.worker.runner import is_worker_running
 
     def _status() -> dict[str, Any]:
@@ -182,6 +263,351 @@ def lexi_get_system_status() -> str:
         return base
 
     return _wrap("lexi_get_system_status", _status)
+
+
+@mcp.tool()
+def lexi_inbox_review(hours: str = "48") -> str:
+    """48-hour inbox activity summary + open action items for Kory. Trigger: Kory says 'inbox review'."""
+    try:
+        window = max(1, min(168, int(hours.strip() or "48")))
+    except ValueError:
+        window = 48
+    return _wrap("lexi_inbox_review", lexi.inbox_review_action, hours=window)
+
+
+@mcp.tool()
+def lexi_unanswered_brief(hours: str = "72") -> str:
+    """Emails Kory may still need to reply to. Teams shortcut: `unanswered`."""
+    try:
+        window = max(1, min(168, int(hours.strip() or "72")))
+    except ValueError:
+        window = 72
+    return _wrap("lexi_unanswered_brief", lexi.unanswered_brief_action, hours=window)
+
+
+@mcp.tool()
+def lexi_today_calendar() -> str:
+    """Today's calendar for Kory. Teams shortcut: `today`."""
+    return _wrap("lexi_today_calendar", lexi.today_calendar_brief_action)
+
+
+@mcp.tool()
+def lexi_prebrief(include_research: str = "false") -> str:
+    """Pre-meeting briefs for today including who introduced. Teams shortcut: `prebrief`."""
+    research = include_research.strip().lower() in {"1", "true", "yes"}
+    return _wrap("lexi_prebrief", lexi.prebrief_action, include_research=research)
+
+
+@mcp.tool()
+def lexi_daily_ceo_briefing() -> str:
+    """Full morning CEO briefing (calendar + unanswered + pending + Asana). Scheduled 4:45 AM MT."""
+    return _wrap("lexi_daily_ceo_briefing", lexi.daily_ceo_briefing_action)
+
+
+@mcp.tool()
+def lexi_list_asana_tasks(bucket: str = "due_today") -> str:
+    """List Asana tasks: overdue | due_today | upcoming | all (read-only)."""
+    return _wrap("lexi_list_asana_tasks", lexi.list_asana_tasks_action, bucket=bucket)
+
+
+@mcp.tool()
+def lexi_create_asana_task(
+    title: str,
+    notes: str = "",
+    due_on: str = "",
+    confirm: str = "false",
+) -> str:
+    """Create Asana task after Kory confirms (writes blocked until LEXI_ASANA_LIVE_WRITES_ENABLED)."""
+    approved = confirm.strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_create_asana_task",
+        lexi.create_asana_task_action,
+        title=title,
+        notes=notes,
+        due_on=due_on,
+        confirm=approved,
+    )
+
+
+@mcp.tool()
+def lexi_complete_asana_task(task_gid: str, confirm: str = "false") -> str:
+    """Mark Asana task complete after Kory confirms (live writes blocked for now)."""
+    approved = confirm.strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_complete_asana_task",
+        lexi.complete_asana_task_action,
+        task_gid=task_gid,
+        confirm=approved,
+    )
+
+
+@mcp.tool()
+def lexi_update_asana_task(
+    task_gid: str,
+    title: str = "",
+    notes: str = "",
+    due_on: str = "",
+    confirm: str = "false",
+) -> str:
+    """Update Asana task title/notes/due date after confirm (writes blocked for now)."""
+    approved = confirm.strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_update_asana_task",
+        lexi.update_asana_task_action,
+        task_gid=task_gid,
+        title=title,
+        notes=notes,
+        due_on=due_on,
+        confirm=approved,
+    )
+
+
+@mcp.tool()
+def lexi_delete_asana_task(task_gid: str, confirm: str = "false") -> str:
+    """Delete Asana task after confirm (writes blocked for now)."""
+    approved = confirm.strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_delete_asana_task",
+        lexi.delete_asana_task_action,
+        task_gid=task_gid,
+        confirm=approved,
+    )
+
+
+@mcp.tool()
+def lexi_search_asana_tasks(query: str) -> str:
+    """Search Asana tasks by name across NON-IFG + related projects (read-only)."""
+    return _wrap("lexi_search_asana_tasks", lexi.search_asana_tasks_action, query=query)
+
+
+@mcp.tool()
+def lexi_move_asana_task(
+    task_gid: str,
+    section_gid: str = "",
+    section_name: str = "",
+    confirm: str = "false",
+) -> str:
+    """Move Asana task to a section after confirm (writes blocked for now)."""
+    approved = confirm.strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_move_asana_task",
+        lexi.move_asana_task_action,
+        task_gid=task_gid,
+        section_gid=section_gid,
+        section_name=section_name,
+        confirm=approved,
+    )
+
+
+@mcp.tool()
+def lexi_comment_asana_task(task_gid: str, comment: str, confirm: str = "false") -> str:
+    """Comment on an Asana task after confirm (writes blocked for now)."""
+    approved = confirm.strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_comment_asana_task",
+        lexi.comment_asana_task_action,
+        task_gid=task_gid,
+        comment=comment,
+        confirm=approved,
+    )
+
+
+@mcp.tool()
+def lexi_hubspot_status() -> str:
+    """HubSpot connection status (read-only sample)."""
+    return _wrap("lexi_hubspot_status", lexi.hubspot_status_action)
+
+
+@mcp.tool()
+def lexi_hubspot_cleanup_proposals(inactive_days: str = "180") -> str:
+    """Propose inactive contact cleanup — staged locally, no HubSpot writes until approved."""
+    try:
+        days = int(inactive_days.strip() or "180")
+    except ValueError:
+        days = 180
+    return _wrap("lexi_hubspot_cleanup_proposals", lexi.hubspot_cleanup_proposals_action, inactive_days=days)
+
+
+@mcp.tool()
+def lexi_hubspot_outreach_batch(goal: str = "", limit: str = "10") -> str:
+    """Draft outreach emails for a HubSpot batch — approval required before send."""
+    try:
+        n = max(1, min(25, int(limit.strip() or "10")))
+    except ValueError:
+        n = 10
+    return _wrap("lexi_hubspot_outreach_batch", lexi.hubspot_outreach_batch_action, goal=goal, limit=n)
+
+
+@mcp.tool()
+def lexi_hubspot_duplicate_merges(limit: str = "50") -> str:
+    """Propose duplicate contact merges — staged only; HubSpot writes blocked for now."""
+    try:
+        n = max(1, min(100, int(limit.strip() or "50")))
+    except ValueError:
+        n = 50
+    return _wrap("lexi_hubspot_duplicate_merges", lexi.hubspot_duplicate_merges_action, limit=n)
+
+
+@mcp.tool()
+def lexi_hubspot_lead_source_fills(limit: str = "25") -> str:
+    """Propose lead source/lifecycle fills from email history — staged only."""
+    try:
+        n = max(1, min(50, int(limit.strip() or "25")))
+    except ValueError:
+        n = 25
+    return _wrap("lexi_hubspot_lead_source_fills", lexi.hubspot_lead_source_fills_action, limit=n)
+
+
+@mcp.tool()
+def lexi_hubspot_prebrief_enrich(email: str = "", name: str = "") -> str:
+    """Pull HubSpot company/lifecycle/source into a pre-meeting brief (read-only)."""
+    return _wrap(
+        "lexi_hubspot_prebrief_enrich",
+        lexi.hubspot_prebrief_enrich_action,
+        email=email,
+        name=name,
+    )
+
+
+@mcp.tool()
+def lexi_hubspot_meeting_note(
+    email: str,
+    note: str,
+    meeting_subject: str = "",
+    confirm: str = "false",
+) -> str:
+    """Stage a HubSpot note after a meeting (writes blocked for now)."""
+    approved = confirm.strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_hubspot_meeting_note",
+        lexi.hubspot_meeting_note_action,
+        email=email,
+        note=note,
+        meeting_subject=meeting_subject,
+        confirm=approved,
+    )
+
+
+@mcp.tool()
+def lexi_hubspot_outreach_candidates(
+    goal: str = "",
+    lifecycle: str = "",
+    limit: str = "15",
+) -> str:
+    """Find HubSpot contacts for outreach (read-only filter)."""
+    try:
+        n = max(1, min(40, int(limit.strip() or "15")))
+    except ValueError:
+        n = 15
+    return _wrap(
+        "lexi_hubspot_outreach_candidates",
+        lexi.hubspot_outreach_candidates_action,
+        goal=goal,
+        lifecycle=lifecycle,
+        limit=n,
+    )
+
+
+@mcp.tool()
+def lexi_hubspot_deals_snapshot(limit: str = "8") -> str:
+    """Open HubSpot deals for CEO briefing (read-only)."""
+    try:
+        n = max(1, min(25, int(limit.strip() or "8")))
+    except ValueError:
+        n = 8
+    return _wrap("lexi_hubspot_deals_snapshot", lexi.hubspot_deals_snapshot_action, limit=n)
+
+
+@mcp.tool()
+def lexi_create_outreach_campaign(
+    name: str,
+    goal: str = "",
+    template_key: str = "generic",
+    pasted_list: str = "",
+    hubspot_limit: str = "0",
+    hubspot_lifecycle: str = "",
+    include_research: str = "false",
+    custom_opener: str = "",
+    custom_subject: str = "",
+) -> str:
+    """Start a mass outreach campaign: personalize drafts and stage them (no send, no Teams cards).
+
+    Templates: ypo_the_turn | generic. Paste Name,email,company lines and/or set hubspot_limit.
+    Drafts stay local until LEXI_OUTREACH_OUTLOOK_DRAFTS_ENABLED; sends stay blocked.
+    """
+    try:
+        hs_limit = max(0, min(100, int((hubspot_limit or "0").strip() or "0")))
+    except ValueError:
+        hs_limit = 0
+    research = (include_research or "").strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_create_outreach_campaign",
+        lexi.create_outreach_campaign_action,
+        name=name,
+        goal=goal,
+        template_key=template_key,
+        pasted_list=pasted_list,
+        hubspot_limit=hs_limit,
+        hubspot_lifecycle=hubspot_lifecycle,
+        include_research=research,
+        custom_opener=custom_opener,
+        custom_subject=custom_subject,
+    )
+
+
+@mcp.tool()
+def lexi_list_outreach_campaigns(limit: str = "20") -> str:
+    """List staged/approved outreach campaigns."""
+    try:
+        n = max(1, min(50, int((limit or "20").strip() or "20")))
+    except ValueError:
+        n = 20
+    return _wrap("lexi_list_outreach_campaigns", lexi.list_outreach_campaigns_action, limit=n)
+
+
+@mcp.tool()
+def lexi_get_outreach_campaign(campaign_id: str) -> str:
+    """Show one outreach campaign and its staged drafts (text only)."""
+    return _wrap(
+        "lexi_get_outreach_campaign",
+        lexi.get_outreach_campaign_action,
+        campaign_id=campaign_id,
+    )
+
+
+@mcp.tool()
+def lexi_approve_outreach_campaign(campaign_id: str, confirm: str = "false") -> str:
+    """Mark campaign approved. Does not send while LEXI_OUTREACH_LIVE_SENDS_ENABLED is false."""
+    ok = (confirm or "").strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_approve_outreach_campaign",
+        lexi.approve_outreach_campaign_action,
+        campaign_id=campaign_id,
+        confirm=ok,
+    )
+
+
+@mcp.tool()
+def lexi_send_outreach_campaign(campaign_id: str, confirm: str = "false") -> str:
+    """Send approved outreach drafts — hard-blocked for UAT (returns dry-run message)."""
+    ok = (confirm or "").strip().lower() in {"1", "true", "yes"}
+    return _wrap(
+        "lexi_send_outreach_campaign",
+        lexi.send_outreach_campaign_action,
+        campaign_id=campaign_id,
+        confirm=ok,
+    )
+
+
+@mcp.tool()
+def lexi_remove_outreach_recipient(campaign_id: str, email: str) -> str:
+    """Remove one recipient from a staged outreach campaign."""
+    return _wrap(
+        "lexi_remove_outreach_recipient",
+        lexi.remove_outreach_recipient_action,
+        campaign_id=campaign_id,
+        email=email,
+    )
 
 
 @mcp.tool()
@@ -240,17 +666,23 @@ def lexi_handle_teams_card_submit(payload_json: str, authorized_by: str = "kory"
 
 
 @mcp.tool()
-def lexi_get_calendar_availability(days: str = "14") -> str:
-    """Read Kory's busy blocks across multiple Outlook calendars (default 14 days).
-
-    Merges primary + named calendars from config/calendars.yaml (IFG Team, Master, etc.).
-    Call lexi_list_calendars to see which calendars are on the account.
-    """
+def lexi_get_calendar_availability(days: str = "0") -> str:
+    """Quick busy/free read (internal). For day-by-day week summaries use lexi_summarize_calendar_window."""
     try:
         window = int(days)
     except ValueError:
-        return _error("days must be an integer string, e.g. '14'.", code="validation_error")
+        return _error("days must be an integer string, e.g. '60'.", code="validation_error")
     return _wrap("lexi_get_calendar_availability", lexi.get_calendar_availability, days=window)
+
+
+@mcp.tool()
+def lexi_summarize_calendar_window(query: str) -> str:
+    """Day-by-day calendar summary from live Master + work Calendar (read-only).
+
+    Pass Kory's full ask, e.g. 'summarize my full calendar for next week'.
+    Returns formatted_summary with correct dates and real events — relay to Kory; do not invent times.
+    """
+    return _wrap("lexi_summarize_calendar_window", lexi.summarize_calendar_window, query=query.strip())
 
 
 @mcp.tool()
@@ -296,11 +728,16 @@ def lexi_place_calendar_hold(
 
 
 @mcp.tool()
-def lexi_draft_outbound_email(to_email: str, subject: str, body: str) -> str:
-    """Preview an outbound email from Kory's mailbox without sending.
+def lexi_draft_outbound_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    send_channel: str = "",
+) -> str:
+    """Preview an outbound email without sending.
 
-    You (Hermes) should write the body in Kory's voice ('Let's Win,\\nKory').
-    After Kory approves the text, call lexi_send_outbound_email with confirm_send=true.
+    send_channel: kory (Kory's voice / mailbox) or lexi (Lexi assistant). Leave blank to infer from sign-off.
+    After Kory approves, call lexi_send_outbound_email with the same send_channel.
     """
     return _wrap(
         "lexi_draft_outbound_email",
@@ -308,6 +745,7 @@ def lexi_draft_outbound_email(to_email: str, subject: str, body: str) -> str:
         to_email=to_email,
         subject=subject,
         body=body,
+        send_channel=send_channel.strip(),
     )
 
 
@@ -318,10 +756,11 @@ def lexi_send_outbound_email(
     body: str,
     confirm_send: str,
     authorized_by: str = "kory",
-    send_channel: str = "lexi",
+    send_channel: str = "",
 ) -> str:
-    """Send outbound email only after Kory explicitly approves (default: lexi@).
+    """Send outbound email only after Kory explicitly approves.
 
+    send_channel: kory or lexi — must match the draft preview. Leave blank to infer from sign-off.
     confirm_send must be 'true' or 'yes' (case insensitive).
     """
     confirmed = confirm_send.strip().lower() in {"true", "yes", "1"}
@@ -387,6 +826,51 @@ def lexi_get_thread(message_id: str) -> str:
 
 
 @mcp.tool()
+def lexi_find_slots(
+    subject: str,
+    body: str,
+    intent: str = "",
+    meeting_format: str = "",
+    sender_email: str = "",
+) -> str:
+    """Find rule-valid meeting slots on Kory's calendar (unified schedule_from_context).
+
+    MANDATORY for every chat request to propose times — never guess slots in prose.
+    Put the full natural-language request in body (e.g. 'next week Tue-Thu 10am-4pm MT, 30-min virtual intro').
+    sender_email improves timezone detection when known.
+    """
+    return _wrap(
+        "lexi_find_slots",
+        lexi.find_slots_for_request,
+        subject=subject.strip(),
+        body=body.strip(),
+        intent=intent.strip(),
+        meeting_format=meeting_format.strip(),
+        sender_email=sender_email.strip(),
+    )
+
+
+@mcp.tool()
+def lexi_preview_schedule(
+    subject: str,
+    body: str,
+    sender_email: str = "",
+    intent: str = "",
+) -> str:
+    """Dry-run scheduling + template draft (no send, no holds). Same engine as inbound email."""
+    from app.scheduling.hermes_orchestrator import preview_scheduling_draft
+
+    return _wrap(
+        "lexi_preview_schedule",
+        preview_scheduling_draft,
+        subject=subject.strip(),
+        body=body.strip(),
+        sender_email=sender_email.strip() or None,
+        intent=intent.strip() or None,
+    )
+
+
+@mcp.tool()
 def lexi_propose_schedule(
     subject: str,
     body: str,
@@ -406,7 +890,7 @@ def lexi_propose_schedule(
 
 @mcp.tool()
 def lexi_validate_slots(slots_json: str, intent: str = "") -> str:
-    """Validate ISO slots against Kory rules (6pm cutoff, weekends, lunch warnings)."""
+    """Validate ISO slots against Kory rules AND the live calendar."""
     try:
         slots = json.loads(slots_json)
     except json.JSONDecodeError as exc:
@@ -418,6 +902,29 @@ def lexi_validate_slots(slots_json: str, intent: str = "") -> str:
         lexi.validate_slots_preview,
         slots=slots,
         intent=intent,
+    )
+
+
+@mcp.tool()
+def lexi_validate_scheduling_cases(preset: str = "", cases_json: str = "[]") -> str:
+    """MANDATORY for 'validate these slots' chat asks — live calendar + Kory rules per slot.
+
+    Use preset=july_slot_check for the standard July rules test, OR pass cases_json as a JSON array:
+    [{"label":"...", "intent":"coffee", "start_iso":"2026-07-07T08:30:00-06:00", "meeting_format":"in_person"}, ...]
+
+    Returns formatted_summary — relay to Kory verbatim; do not re-validate in prose.
+    """
+    try:
+        cases = json.loads(cases_json or "[]")
+    except json.JSONDecodeError as exc:
+        return _error(f"cases_json must be a JSON array: {exc}", code="validation_error")
+    if cases_json.strip() and not isinstance(cases, list):
+        return _error("cases_json must be a JSON array.", code="validation_error")
+    return _wrap(
+        "lexi_validate_scheduling_cases",
+        lexi.validate_scheduling_cases_action,
+        preset=preset.strip(),
+        cases=cases if cases else None,
     )
 
 
@@ -528,7 +1035,7 @@ def lexi_decline_calendar_invite(event_id: str, comment: str = "") -> str:
 
 @mcp.tool()
 def lexi_find_meeting_times(payload_json: str) -> str:
-    """Find meeting times via Outlook (read-only). Pass JSON for OUTLOOK_FIND_MEETING_TIMES."""
+    """Find meeting times (internal). Tell Kory only whether times exist — never mention Outlook API or engine details."""
     return _wrap("lexi_find_meeting_times", lexi.find_meeting_times_action, payload_json=payload_json)
 
 
@@ -653,12 +1160,15 @@ def get_lexi_pending_queue_tool() -> str:
     """Return Lexi proposals awaiting CEO approval (pending_approval) from inbound email."""
     try:
         items = get_lexi_pending_queue()
+        from app.bot.teams_text import format_pending_approval_digest
+
         payload = [item.to_dict() for item in items]
         return _ok(
             {
                 "count": len(payload),
                 "queue": payload,
                 "formatted_list": [item.teams_summary_line() for item in items],
+                "formatted_digest": format_pending_approval_digest(items),
             }
         )
     except Exception as exc:

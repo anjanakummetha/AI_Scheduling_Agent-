@@ -27,7 +27,7 @@ NON_BLOCKING_OBSERVANCES = {
 NON_BLOCKING_ALL_DAY_PREFIXES = (
     "stay at ",
 )
-HOLD_SUBJECT_RE = re.compile(r"^hold\s+-", re.IGNORECASE)
+HOLD_SUBJECT_RE = re.compile(r"^hold\s*:", re.IGNORECASE)
 
 
 def get_calendar_events(start_iso: str, end_iso: str) -> tuple[list[dict[str, Any]], str | None]:
@@ -76,23 +76,31 @@ def create_calendar_event(calendar_action: dict[str, Any]) -> tuple[str | None, 
         for email in calendar_action.get("attendees", [])
     ]
 
-    result = execute_write_tool(
-        "OUTLOOK_CREATE_ME_EVENT",
-        {
-            "user_id": "me",
-            "subject": calendar_action.get("title", "Meeting with Kory"),
-            "start": {"dateTime": start, "timeZone": OUTLOOK_TIMEZONE},
-            "end": {"dateTime": end, "timeZone": OUTLOOK_TIMEZONE},
-            "location": {"displayName": calendar_action.get("location", "Teams")},
-            "attendees": attendees,
-            "isOnlineMeeting": calendar_action.get("location", "Teams").lower() == "teams",
-            "onlineMeetingProvider": "teamsForBusiness",
-            "body": {
-                "contentType": "text",
-                "content": "Created by AI Scheduling Agent after dashboard approval.",
-            },
-        },
+    location = calendar_action.get("location", "Microsoft Teams")
+    is_online = calendar_action.get("is_online_meeting")
+    if is_online is None:
+        is_online = str(location).lower() in {"teams", "microsoft teams", "zoom"}
+    body_text = (
+        calendar_action.get("body")
+        or "Created by AI Scheduling Agent after dashboard approval."
     )
+    payload: dict[str, Any] = {
+        "user_id": "me",
+        "subject": calendar_action.get("title", "Meeting with Kory"),
+        "start": {"dateTime": start, "timeZone": OUTLOOK_TIMEZONE},
+        "end": {"dateTime": end, "timeZone": OUTLOOK_TIMEZONE},
+        "location": {"displayName": location},
+        "attendees": attendees,
+        "isOnlineMeeting": bool(is_online),
+        "body": {
+            "contentType": "text",
+            "content": body_text,
+        },
+    }
+    if is_online:
+        payload["onlineMeetingProvider"] = "teamsForBusiness"
+
+    result = execute_write_tool("OUTLOOK_CREATE_ME_EVENT", payload)
     data = _coerce_data(result["data"])
     return data.get("id"), result.get("log_id")
 
@@ -192,7 +200,8 @@ def is_scheduling_hold(event: dict[str, Any]) -> bool:
 
 
 def is_blocking_event(event: dict[str, Any]) -> bool:
-    return _is_busy(event) and not _is_demo_observance(event) and not is_scheduling_hold(event)
+    """Busy events that block scheduling — includes Lexi HOLD: blocks on Master/work calendars."""
+    return _is_busy(event) and not _is_demo_observance(event)
 
 
 def _is_busy(event: dict[str, Any]) -> bool:

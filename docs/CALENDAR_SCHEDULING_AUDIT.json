@@ -1,0 +1,84 @@
+{
+  "audit_date": "2026-06-23",
+  "phase": 0,
+  "composio_visible_calendars": [
+    {"name": "Calendar", "can_edit": true, "in_conflict_read_set": true, "role": "work_primary_write"},
+    {"name": "Kory Master Calendar (ALL)", "can_edit": true, "in_conflict_read_set": true, "role": "personal_rollup"},
+    {"name": "Birthdays", "can_edit": false, "in_conflict_read_set": false, "role": "informational"},
+    {"name": "Kory's tasks - My workspace", "can_edit": true, "in_conflict_read_set": false, "role": "tasks"}
+  ],
+  "not_on_composio": [
+    "IFG Team",
+    "Kory & Heidi only",
+    "Deal Activity",
+    "Daily CEO Update"
+  ],
+  "default_write_calendar": "Calendar",
+  "horizons": {
+    "30": {
+      "range_start": "2026-06-23",
+      "range_end": "2026-07-23",
+      "blocking_count": 105,
+      "classification_skipped": 171,
+      "by_class": {
+        "work_blocking": 59,
+        "personal_kory_blocking": 1,
+        "family_do_not_move": 18,
+        "unknown_blocking": 25,
+        "travel_blocking": 2
+      }
+    },
+    "60": {
+      "range_start": "2026-06-23",
+      "range_end": "2026-08-22",
+      "blocking_count": 170,
+      "classification_skipped": 316,
+      "by_class": {
+        "work_blocking": 92,
+        "personal_kory_blocking": 1,
+        "family_do_not_move": 40,
+        "travel_blocking": 3,
+        "unknown_blocking": 34
+      }
+    },
+    "120": {
+      "range_start": "2026-06-23",
+      "range_end": "2026-10-21",
+      "blocking_count": 231,
+      "classification_skipped": 476,
+      "by_class": {
+        "work_blocking": 135,
+        "personal_kory_blocking": 1,
+        "family_do_not_move": 46,
+        "travel_blocking": 5,
+        "unknown_blocking": 44
+      }
+    }
+  },
+  "raw_14d_blocking": {
+    "Calendar": 38,
+    "Kory Master Calendar (ALL)": 54,
+    "Birthdays": 0,
+    "Kory's tasks - My workspace": 0
+  },
+  "master_30d_spot_check": {
+    "duplicate_copy": 48,
+    "unknown_blocking": 45,
+    "family_do_not_move": 18,
+    "travel_blocking": 2,
+    "work_blocking": 2,
+    "kid_only_non_blocking": 2,
+    "personal_kory_blocking": 1
+  },
+  "km_kory_pattern_30d": {
+    "km_or_kory_titled_events": 28,
+    "note": "KM/Kory in title is a positive signal for personal blocks but not sufficient alone; work intros and duplicates must override"
+  },
+  "phase_1_priorities": [
+    "KM prefix as soft signal combined with work/kid/travel rules",
+    "Travel week detection (hotel, tours, emoji dining)",
+    "Reduce unknown_blocking on Master copies",
+    "Wire 60d horizon in outbound_agent",
+    "Regression tests from audit examples"
+  ]
+}

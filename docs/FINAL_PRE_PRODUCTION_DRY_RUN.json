@@ -1,0 +1,386 @@
+{
+  "generated_at": "2026-07-01T21:48:07.824297+00:00",
+  "mode": {
+    "lexi_dry_run": true,
+    "teams_suppressed": true,
+    "teams_connection": "NOT_STARTED \u2014 awaiting your go-live signal"
+  },
+  "summary": {
+    "passed": 29,
+    "failed": 0,
+    "total": 29
+  },
+  "ready_for_teams_live": true,
+  "results": [
+    {
+      "phase": "safety",
+      "id": "dry_run",
+      "name": "LEXI_DRY_RUN on",
+      "status": "PASS",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "phase": "safety",
+      "id": "no_cal_writes",
+      "name": "Outbound writes blocked",
+      "status": "PASS",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "phase": "safety",
+      "id": "teams_suppressed",
+      "name": "Teams push suppressed",
+      "status": "PASS",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "phase": "safety",
+      "id": "escalation_staged",
+      "name": "Escalation emails staged (not sent)",
+      "status": "PASS",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "phase": "calendar",
+      "id": "load",
+      "name": "Calendar context",
+      "status": "PASS",
+      "detail": "210 blocking events",
+      "evidence": null
+    },
+    {
+      "phase": "inbox",
+      "id": "read",
+      "name": "Read Kory inbox",
+      "status": "PASS",
+      "detail": "25 messages (log=None)",
+      "evidence": null
+    },
+    {
+      "phase": "inbox",
+      "id": "inbox_01",
+      "name": "10k?",
+      "status": "PASS",
+      "detail": "3 slots calendar-clean; tz=None (unknown); write\u2192Calendar",
+      "evidence": {
+        "sender": "nicole@sales-hawk.pro",
+        "intent": "meeting_request",
+        "path": "slot_engine",
+        "slots": [
+          {
+            "start": "2026-07-07T09:00:00-06:00",
+            "end": "2026-07-07T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-10T09:00:00-06:00",
+            "end": "2026-07-10T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-10T10:00:00-06:00",
+            "end": "2026-07-10T10:30:00-06:00"
+          }
+        ],
+        "formatted": [
+          "Tuesday, July 7 at 9:00 AM\u20139:30 AM MT (11:00 AM\u201311:30 AM ET / 10:00 AM\u201310:30 AM CT / 8:00 AM\u20138:30 AM PT)",
+          "Friday, July 10 at 9:00 AM\u20139:30 AM MT (11:00 AM\u201311:30 AM ET / 10:00 AM\u201310:30 AM CT / 8:00 AM\u20138:30 AM PT)",
+          "Friday, July 10 at 10:00 AM\u201310:30 AM MT (12:00 PM\u201312:30 PM ET / 11:00 AM\u201311:30 AM CT / 9:00 AM\u20139:30 AM PT)"
+        ]
+      }
+    },
+    {
+      "phase": "inbox",
+      "id": "inbox_02",
+      "name": "Re: Fractional CFO Discussion - Frontier (Rusty) / IFG (Kory",
+      "status": "PASS",
+      "detail": "3 slots calendar-clean; tz=None (unknown); write\u2192Calendar",
+      "evidence": {
+        "sender": "wwallace@frontierdevelopmentinc.com",
+        "intent": "meeting_request",
+        "path": "slot_engine",
+        "slots": [
+          {
+            "start": "2026-07-07T09:00:00-06:00",
+            "end": "2026-07-07T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-22T09:00:00-06:00",
+            "end": "2026-07-22T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-22T10:00:00-06:00",
+            "end": "2026-07-22T10:30:00-06:00"
+          }
+        ],
+        "formatted": [
+          "Tuesday, July 7 at 9:00 AM\u20139:30 AM MT (11:00 AM\u201311:30 AM ET / 10:00 AM\u201310:30 AM CT / 8:00 AM\u20138:30 AM PT)",
+          "Wednesday, July 22 at 9:00 AM\u20139:30 AM MT (11:00 AM\u201311:30 AM ET / 10:00 AM\u201310:30 AM CT / 8:00 AM\u20138:30 AM PT)",
+          "Wednesday, July 22 at 10:00 AM\u201310:30 AM MT (12:00 PM\u201312:30 PM ET / 11:00 AM\u201311:30 AM CT / 9:00 AM\u20139:30 AM PT)"
+        ]
+      }
+    },
+    {
+      "phase": "inbox",
+      "id": "inbox_03",
+      "name": "RE: Fractional CFO Discussion - Frontier (Rusty) / IFG (Kory",
+      "status": "PASS",
+      "detail": "3 slots calendar-clean; tz=America/Chicago (signature); write\u2192Calendar",
+      "evidence": {
+        "sender": "pmackey@TeamFervent.com",
+        "intent": "unknown",
+        "path": "slot_engine",
+        "slots": [
+          {
+            "start": "2026-07-22T09:00:00-06:00",
+            "end": "2026-07-22T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-22T10:00:00-06:00",
+            "end": "2026-07-22T10:30:00-06:00"
+          },
+          {
+            "start": "2026-07-22T11:00:00-06:00",
+            "end": "2026-07-22T11:30:00-06:00"
+          }
+        ],
+        "formatted": [
+          "Wednesday, July 22 at 10:00 AM\u201310:30 AM CT (9:00 AM\u20139:30 AM MT)",
+          "Wednesday, July 22 at 11:00 AM\u201311:30 AM CT (10:00 AM\u201310:30 AM MT)",
+          "Wednesday, July 22 at 12:00 PM\u201312:30 PM CT (11:00 AM\u201311:30 AM MT)"
+        ]
+      }
+    },
+    {
+      "phase": "inbox",
+      "id": "inbox_04",
+      "name": "RE: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitc",
+      "status": "PASS",
+      "detail": "3 slots calendar-clean; tz=America/New_York (area_code); write\u2192Calendar",
+      "evidence": {
+        "sender": "ramzi.dagher@myfirstbank.com",
+        "intent": "referral_or_intro",
+        "path": "slot_engine_after_inbound",
+        "slots": [
+          {
+            "start": "2026-07-07T09:00:00-06:00",
+            "end": "2026-07-07T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-10T09:00:00-06:00",
+            "end": "2026-07-10T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-10T10:00:00-06:00",
+            "end": "2026-07-10T10:30:00-06:00"
+          }
+        ],
+        "formatted": [
+          "Tuesday, July 7 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)",
+          "Friday, July 10 at 11:00 AM\u201311:30 AM ET (9:00 AM\u20139:30 AM MT)",
+          "Friday, July 10 at 12:00 PM\u201312:30 PM ET (10:00 AM\u201310:30 AM MT)"
+        ]
+      }
+    },
+    {
+      "phase": "inbox",
+      "id": "inbox_05",
+      "name": "RE: EXTERNAL:  Intro: Ramzi Dagher (First Bank) <> Kory Mitc",
+      "status": "PASS",
+      "detail": "3 slots calendar-clean; tz=America/New_York (area_code); write\u2192Calendar",
+      "evidence": {
+        "sender": "ramzi.dagher@myfirstbank.com",
+        "intent": "referral_or_intro",
+        "path": "slot_engine",
+        "slots": [
+          {
+            "start": "2026-07-13T16:00:00-06:00",
+            "end": "2026-07-13T16:30:00-06:00"
+          },
+          {
+            "start": "2026-07-14T14:00:00-06:00",
+            "end": "2026-07-14T14:30:00-06:00"
+          },
+          {
+            "start": "2026-07-14T16:00:00-06:00",
+            "end": "2026-07-14T16:30:00-06:00"
+          }
+        ],
+        "formatted": [
+          "Monday, July 13 at 6:00 PM\u20136:30 PM ET (4:00 PM\u20134:30 PM MT)",
+          "Tuesday, July 14 at 4:00 PM\u20134:30 PM ET (2:00 PM\u20132:30 PM MT)",
+          "Tuesday, July 14 at 6:00 PM\u20136:30 PM ET (4:00 PM\u20134:30 PM MT)"
+        ]
+      }
+    },
+    {
+      "phase": "inbox",
+      "id": "inbox_06",
+      "name": "Your Outreach Daily Digest: 2026/07/01",
+      "status": "PASS",
+      "detail": "3 slots calendar-clean; tz=America/Los_Angeles (profile); write\u2192Calendar",
+      "evidence": {
+        "sender": "notifications@app.outreach.io",
+        "intent": "non_scheduling",
+        "path": "slot_engine",
+        "slots": [
+          {
+            "start": "2026-07-22T09:00:00-06:00",
+            "end": "2026-07-22T09:30:00-06:00"
+          },
+          {
+            "start": "2026-07-22T10:00:00-06:00",
+            "end": "2026-07-22T10:30:00-06:00"
+          },
+          {
+            "start": "2026-07-22T11:00:00-06:00",
+            "end": "2026-07-22T11:30:00-06:00"
+          }
+        ],
+        "formatted": [
+          "Wednesday, July 22 at 8:00 AM\u20138:30 AM PT (9:00 AM\u20139:30 AM MT)",
+          "Wednesday, July 22 at 9:00 AM\u20139:30 AM PT (10:00 AM\u201310:30 AM MT)",
+          "Wednesday, July 22 at 10:00 AM\u201310:30 AM PT (11:00 AM\u201311:30 AM MT)"
+        ]
+      }
+    },
+    {
+      "phase": "pipeline",
+      "id": "awaiting_prompt",
+      "name": "Stops at awaiting_reply_prompt",
+      "status": "PASS",
+      "detail": "awaiting_reply_prompt",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "voice_lexi",
+      "name": "Draft in Lexi voice (pipeline)",
+      "status": "PASS",
+      "detail": "Hi Anjana,  I'm Lexi, Kory's assistant \u2014 happy to help find a time.  \u2022 Wednesday, July 22 at 9:00 AM",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "voice_kory",
+      "name": "Kory voice sign-off",
+      "status": "PASS",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "voice_lexi_compose",
+      "name": "Lexi voice sign-off",
+      "status": "PASS",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "approval_card",
+      "name": "Teams approval card builds",
+      "status": "PASS",
+      "detail": "['Save draft', 'Send', 'Discard']",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "save_draft",
+      "name": "Save draft (Hermes card path)",
+      "status": "PASS",
+      "detail": "Saved draft for **Anjana Kummetha \u2014 TEST \u2014 intro call \u2014 Denver family office**. ",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "save_persisted",
+      "name": "Draft persisted in DB",
+      "status": "PASS",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "dry_send",
+      "name": "Send offer (dry-run \u2014 no Outlook)",
+      "status": "PASS",
+      "detail": "status=offer_sent email_sent=True",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "holds_db",
+      "name": "Hold rows recorded (dry-run)",
+      "status": "PASS",
+      "detail": "holds=3",
+      "evidence": null
+    },
+    {
+      "phase": "pipeline",
+      "id": "discard",
+      "name": "Discard releases holds",
+      "status": "PASS",
+      "detail": "holds_released=3",
+      "evidence": null
+    },
+    {
+      "phase": "delegation",
+      "id": "cc_lexi_intro",
+      "name": "detect_delegation",
+      "status": "PASS",
+      "detail": "delegation=True reason=kory_cc_scheduling_ask",
+      "evidence": null
+    },
+    {
+      "phase": "delegation",
+      "id": "cold_inbound_intro",
+      "name": "detect_delegation",
+      "status": "PASS",
+      "detail": "delegation=False reason=not_delegation",
+      "evidence": null
+    },
+    {
+      "phase": "timezone",
+      "id": "bill.heermann",
+      "name": "TZ for bill.heermann@newportadvisors.co",
+      "status": "PASS",
+      "detail": "America/New_York source=domain confidence=known",
+      "evidence": null
+    },
+    {
+      "phase": "timezone",
+      "id": "braden",
+      "name": "TZ for braden@nycapital.com",
+      "status": "PASS",
+      "detail": "America/New_York source=body confidence=known",
+      "evidence": null
+    },
+    {
+      "phase": "timezone",
+      "id": "unknown",
+      "name": "TZ for unknown@weird-domain.zzz",
+      "status": "PASS",
+      "detail": "None source=unknown confidence=unknown",
+      "evidence": null
+    },
+    {
+      "phase": "scenarios",
+      "id": "audit",
+      "name": "Scheduling scenario audit",
+      "status": "PASS",
+      "detail": "12/12 scenarios",
+      "evidence": null
+    },
+    {
+      "phase": "pytest",
+      "id": "core",
+      "name": "Core scheduling + Teams tests",
+      "status": "PASS",
+      "detail": "........................................................                 [100%] | 56 passed in 231.76s (0:03:51)",
+      "evidence": null
+    }
+  ]
+}

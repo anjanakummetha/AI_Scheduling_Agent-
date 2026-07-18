@@ -178,15 +178,11 @@ def step_1_triage() -> int:
 
 
 def step_2_scheduler(expected_proposal_id: int) -> None:
-    _banner("STEP 2: KORY SAYS YES → SCHEDULER (slots + holds)")
+    _banner("STEP 2: KORY SAYS YES → SCHEDULER (slots + draft; holds after send)")
 
     with (
         patch("app.agents.scheduler_agent._load_calendar_context", return_value=MOCK_CALENDAR_CONTEXT),
         patch("app.agents.scheduler_agent._call_llm_scheduler", return_value=MOCK_SCHEDULE),
-        patch(
-            "app.integrations.hold_placement.place_tentative_hold",
-            side_effect=lambda **kwargs: {"ok": True, "event_id": f"hold-mock-{kwargs.get('start_iso', '')[:10]}"},
-        ),
     ):
         draft_result = begin_draft_reply(expected_proposal_id)
 
@@ -219,20 +215,13 @@ def step_2_scheduler(expected_proposal_id: int) -> None:
 
         slots = json.loads(proposal["proposed_slots"] or "[]")
         _assert_true(len(slots) >= 2, f"proposed_slots has >= 2 entries (got {len(slots)}).")
-        _assert_true(len(holds) == len(slots), "holds table has one row per proposed slot.")
+        _assert_true(len(holds) == 0, "holds are not placed until after Send offer.")
 
         _subheader("Proposal adjustments")
         print(f"  status          : {proposal['status']}")
         print(f"  confidence      : {proposal['confidence_score']}")
         print(f"  proposed_slots  : {json.dumps(slots, indent=2)}")
         print(f"  drafted_reply   :\n{proposal['drafted_reply']}")
-
-        _subheader("Tentative holds")
-        for hold in holds:
-            print(
-                f"  hold #{hold['id']} | event_id={hold['event_id']} | "
-                f"{hold['slot_start']} → {hold['slot_end']}"
-            )
     finally:
         conn.close()
 
@@ -268,6 +257,7 @@ def step_4_execute_approval(proposal_id: int, selected_slot_start: str) -> None:
     print("  authorized_by : kory-teams-id-001")
 
     with (
+        patch("app.integrations.hold_placement.place_tentative_hold") as mock_hold,
         patch("app.agents.comms_agent.create_calendar_event", return_value=("outlook-confirmed-event-001", "log-cal")),
         patch("app.agents.comms_agent.delete_calendar_event", return_value="log-del"),
         patch("app.agents.comms_agent.create_draft_reply", return_value=("draft-msg-001", "log-draft")),
@@ -277,6 +267,10 @@ def step_4_execute_approval(proposal_id: int, selected_slot_start: str) -> None:
             return_value=("dry-run-pilot-reply", "log-send"),
         ),
     ):
+        mock_hold.side_effect = lambda **kwargs: {
+            "ok": True,
+            "event_id": f"hold-mock-{kwargs.get('action', {}).get('start', '')[:10]}",
+        }
         result = execute_lexi_approval(
             proposal_id=proposal_id,
             decision="approved",
@@ -287,7 +281,9 @@ def step_4_execute_approval(proposal_id: int, selected_slot_start: str) -> None:
     _subheader("Execution result")
     print(json.dumps(result.to_dict(), indent=2))
     _assert_true(result.ok, "execute_lexi_approval returned ok=True.")
-    _assert_true(result.status == "executed", f"execution status is executed (got {result.status}).")
+    _assert_true(result.email_sent, "offer email was sent.")
+    _assert_true(result.status == "offer_sent", f"execution status is offer_sent (got {result.status}).")
+    _assert_true(result.holds_confirmed >= 1, "holds placed after offer email sent.")
 
 
 def step_5_final_validation(proposal_id: int, selected_slot_start: str) -> None:
@@ -301,21 +297,18 @@ def step_5_final_validation(proposal_id: int, selected_slot_start: str) -> None:
         ).fetchone()
         _assert_true(proposal is not None, "Final proposal row exists.")
         _assert_true(
-            proposal["status"] == "executed",
-            f"Final proposal status is executed (got {proposal['status']}).",
+            proposal["status"] == "offer_sent",
+            f"Final proposal status is offer_sent (got {proposal['status']}).",
         )
 
         holds = conn.execute(
             "SELECT id, event_id, slot_start, slot_end FROM holds WHERE proposal_id = ?",
             (proposal_id,),
         ).fetchall()
-        unselected = [
-            hold for hold in holds
-            if _normalize_slot(str(hold["slot_start"])) != _normalize_slot(selected_slot_start)
-        ]
+        slots = json.loads(proposal["proposed_slots"] or "[]")
         _assert_true(
-            len(unselected) == 0,
-            "Unselected holds were released/deleted (only confirmed hold may remain).",
+            len(holds) == len(slots),
+            "One calendar hold per offered slot after Send offer.",
         )
         print(f"\nRemaining holds for proposal {proposal_id}: {len(holds)}")
         for hold in holds:
