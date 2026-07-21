@@ -283,9 +283,10 @@ def place_calendar_hold(
     from app.safety.approval_gate import assert_kory_approved_write
 
     assert_kory_approved_write(approved=confirm, action="Calendar hold")
+    # The canonical "HOLD: " prefix is applied downstream by calendar_holds.py
+    # (and is what hold-detection matches). Don't prefix here or holds end up
+    # titled "HOLD: Hold - ...".
     subject = (title or "Meeting").strip()
-    if not subject.lower().startswith("hold"):
-        subject = f"Hold - {subject}"
 
     attendees = []
     email = attendee_email.strip().lower()

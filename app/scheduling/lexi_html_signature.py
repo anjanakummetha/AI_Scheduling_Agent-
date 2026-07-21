@@ -146,7 +146,7 @@ def build_lexi_html_signature_block(*, use_cid: bool = True) -> str:
         'style="color:#0563c1;text-decoration:underline;">lexi@iconicfounders.com</a>'
     )
     contact = (
-        '<div style="font-size:15px;font-weight:bold;color:#000000;margin:0 0 4px 0;">Lexi</div>'
+        '<div style="font-size:15px;font-weight:normal;color:#000000;margin:0 0 4px 0;">Lexi</div>'
         f'<div style="margin:0 0 4px 0;">{company}</div>'
         '<div style="margin:0 0 4px 0;color:#333333;">Assistant to Kory Mitchell</div>'
         f'<div style="margin:0;">{email}</div>'

@@ -107,6 +107,26 @@ def resolve_kory_sender_emails() -> tuple[str, ...]:
     return tuple(email.strip().lower() for email in raw.split(",") if email.strip())
 
 
+def resolve_kory_cc_email() -> str:
+    """Kory's real primary address — the single address CC'd on Lexi-sent mail."""
+    return os.getenv("KORY_CC_EMAIL", "Kory.Mitchell@iconicfounders.com").strip().lower()
+
+
+def resolve_cc_kory_enabled() -> bool:
+    """Whether Lexi CCs Kory on its outbound mail (off for tests, on in production)."""
+    return os.getenv("LEXI_CC_KORY_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
+
+
+def resolve_hubspot_bcc_address() -> str:
+    """HubSpot logging BCC address for outbound scheduling mail to outsiders."""
+    return os.getenv("LEXI_HUBSPOT_BCC_ADDRESS", "").strip().lower()
+
+
+def resolve_hubspot_bcc_enabled() -> bool:
+    """Whether to BCC the HubSpot logging address (production only)."""
+    return os.getenv("LEXI_HUBSPOT_BCC_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+
+
 def resolve_lexi_write_mode() -> str:
     mode = os.getenv("LEXI_WRITE_MODE", "sandbox").strip().lower()
     return mode if mode in {"sandbox", "kory"} else "sandbox"
@@ -114,6 +134,14 @@ def resolve_lexi_write_mode() -> str:
 
 def resolve_composio_search_enabled() -> bool:
     return os.getenv("LEXI_COMPOSIO_SEARCH_ENABLED", "true").lower() in {"1", "true", "yes"}
+
+
+def resolve_composio_timeout_seconds() -> float:
+    """Per-request timeout for Composio calls so a stuck call can't hang the worker."""
+    try:
+        return float(os.getenv("LEXI_COMPOSIO_TIMEOUT_SECONDS", "30").strip() or "30")
+    except ValueError:
+        return 30.0
 
 
 def resolve_teams_inbound_notify_mode() -> str:
@@ -194,6 +222,7 @@ class Settings:
     ).lower() in {"1", "true", "yes"}
     lexi_teams_inbound_notify_mode: str = field(default_factory=resolve_teams_inbound_notify_mode)
     lexi_composio_search_enabled: bool = field(default_factory=resolve_composio_search_enabled)
+    composio_timeout_seconds: float = field(default_factory=resolve_composio_timeout_seconds)
     scheduling_timezone: str = os.getenv("SCHEDULING_TIMEZONE", "America/Denver")
     outlook_timezone: str = os.getenv("OUTLOOK_TIMEZONE", "America/New_York")
     lexi_calendar_search_days: int = field(default_factory=resolve_lexi_calendar_search_days)
@@ -237,6 +266,10 @@ class Settings:
         "LEXI_SUPPRESS_TEAMS_PUSH", "false"
     ).lower() in {"1", "true", "yes"}
     kory_sender_emails: tuple[str, ...] = field(default_factory=resolve_kory_sender_emails)
+    kory_cc_email: str = field(default_factory=resolve_kory_cc_email)
+    cc_kory_enabled: bool = field(default_factory=resolve_cc_kory_enabled)
+    hubspot_bcc_address: str = field(default_factory=resolve_hubspot_bcc_address)
+    hubspot_bcc_enabled: bool = field(default_factory=resolve_hubspot_bcc_enabled)
     heidi_escalation_cc_kory: bool = os.getenv(
         "HEIDI_ESCALATION_CC_KORY", "true"
     ).lower() in {"1", "true", "yes"}

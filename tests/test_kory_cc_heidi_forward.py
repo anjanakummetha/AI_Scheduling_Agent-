@@ -9,12 +9,19 @@ from app.integrations.outlook_email import merge_kory_cc_addresses
 
 def test_merge_kory_cc_addresses_dedupes():
     with patch("app.integrations.outlook_email.settings") as mock_settings:
-        mock_settings.kory_sender_emails = (
-            "kory@ifg.vc",
-            "Kory.Mitchell@iconicfounders.com",
-        )
-        merged = merge_kory_cc_addresses(["kory@ifg.vc", "other@example.com"])
-    assert merged == ["kory@ifg.vc", "other@example.com", "kory.mitchell@iconicfounders.com"]
+        mock_settings.cc_kory_enabled = True
+        mock_settings.kory_cc_email = "Kory.Mitchell@iconicfounders.com"
+        merged = merge_kory_cc_addresses(["kory.mitchell@iconicfounders.com", "other@example.com"])
+    # Kory's real CC address is deduped against any existing entry.
+    assert merged == ["kory.mitchell@iconicfounders.com", "other@example.com"]
+
+
+def test_merge_kory_cc_addresses_disabled_returns_existing_only():
+    with patch("app.integrations.outlook_email.settings") as mock_settings:
+        mock_settings.cc_kory_enabled = False
+        mock_settings.kory_cc_email = "kory.mitchell@iconicfounders.com"
+        merged = merge_kory_cc_addresses(["other@example.com"])
+    assert merged == ["other@example.com"]
 
 
 def test_escalate_to_heidi_forwards_thread(monkeypatch):

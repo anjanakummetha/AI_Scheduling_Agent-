@@ -59,7 +59,15 @@ def _require_api_key() -> str:
 
 @lru_cache
 def get_composio() -> Composio:
-    return Composio(api_key=_require_api_key())
+    # A per-request timeout so a stuck Composio call can't hang the worker
+    # indefinitely (a write with no timeout previously hung for minutes).
+    # max_retries=0 keeps our own _execute_with_retry the sole retry authority —
+    # the SDK must never retry a write (that could double-send/double-book).
+    return Composio(
+        api_key=_require_api_key(),
+        timeout=settings.composio_timeout_seconds,
+        max_retries=0,
+    )
 
 
 def _account_entity_id(connection_id: str) -> str:

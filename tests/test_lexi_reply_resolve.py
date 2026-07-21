@@ -85,7 +85,9 @@ def test_create_draft_reply_lexi_uses_reply_all_and_html_update():
         mock_settings.lexi_dry_run = False
         mock_settings.lexi_write_mode = "production"
         mock_settings.sandbox_email_loopback = False
-        mock_settings.kory_sender_emails = ("kory.mitchell@iconicfounders.com",)
+        mock_settings.cc_kory_enabled = True
+        mock_settings.kory_cc_email = "kory.mitchell@iconicfounders.com"
+        mock_settings.hubspot_bcc_enabled = False
         with patch("app.integrations.outlook_email.execute_tool") as mock_exec:
             mock_exec.side_effect = [
                 {"data": {"id": "draft-123"}, "log_id": "log-create"},

@@ -1,6 +1,6 @@
 # Lexi Test Results Report
 
-**Generated:** 2026-07-21 19:09 UTC
+**Generated:** 2026-07-21 19:17 UTC
 **Scope:** Full project except Teams/Azure connection (deferred to deploy day)
 
 ## Summary
