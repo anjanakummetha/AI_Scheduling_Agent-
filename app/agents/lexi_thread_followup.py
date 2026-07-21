@@ -48,6 +48,11 @@ def try_handle_lexi_thread_followup(raw_email: dict[str, Any]) -> dict[str, Any]
         return offer_result
 
     if offer_result and offer_result.get("action") == "offer_reply_unparsed":
+        # They didn't pick an offered slot — they may be proposing a NEW time
+        # ("can he do 9am instead?"). Try the inbound-time path before giving up.
+        inbound_result = _try_inbound_time_suggestion(raw_email, proposal, body=body)
+        if inbound_result:
+            return inbound_result
         return _handle_unparsed_followup(raw_email, proposal, body=body, prior=offer_result)
 
     inbound_result = _try_inbound_time_suggestion(raw_email, proposal, body=body)
@@ -97,16 +102,40 @@ def _try_inbound_time_suggestion(
     )
     if not validated:
         reason = "; ".join(notes[:2]) if notes else "Calendar conflict or rules violation."
-        summary = (
-            f"**{subject}** — they suggested a time but it doesn't fit: {reason} "
-            f"Should I draft new options?"
-        )
+        # The proposed time is busy — look for open times ON the same day so Kory
+        # can offer a near alternative instead of restarting (mirrors Heidi picking
+        # another time on the day the prospect asked for).
+        from app.scheduling.inbound_availability import find_compliant_slots_on_date
+        from app.scheduling.email_format import format_slot_for_email
+
+        alt: list[dict[str, str]] = []
+        for cand in candidates[:2]:
+            for s in find_compliant_slots_on_date(
+                cand["start"], calendar_context=calendar_context, intent=intent,
+                subject=subject, body=body, near_hour=int(cand["start"][11:13] or 12), limit=2,
+            ):
+                if s not in alt:
+                    alt.append(s)
+            if alt:
+                break
+        if alt:
+            alt_text = ", ".join(format_slot_for_email(s) for s in alt[:3])
+            summary = (
+                f"**{subject}** — they asked for a time that's booked ({reason}), but you're "
+                f"open {alt_text} on that day. Want me to offer those?"
+            )
+        else:
+            summary = (
+                f"**{subject}** — they suggested a time but it doesn't fit: {reason} "
+                f"That day is full — should I offer other days?"
+            )
         _notify_kory_followup(int(proposal["proposal_id"]), summary=summary, kind="inbound_time_blocked")
         return {
             "ok": True,
             "action": "inbound_time_blocked",
             "proposal_id": proposal.get("proposal_id"),
             "message": summary,
+            "same_day_alternatives": alt,
         }
 
     slot = validated[0]
