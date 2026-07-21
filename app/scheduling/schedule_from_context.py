@@ -338,6 +338,49 @@ def _try_inbound_slots(
             inbound_notes=notes,
         )
 
+    # Proposed times were busy/non-compliant — honor the proposed DATES by finding
+    # a compliant open slot on each (like Heidi offering a specific time on the day
+    # the prospect asked for, rather than a random earlier date).
+    from datetime import datetime as _dt
+
+    from app.scheduling.inbound_availability import find_compliant_slots_on_date
+
+    on_date: list[dict[str, str]] = []
+    seen_starts: set[str] = set()
+    seen_dates: set[str] = set()
+    for cand in candidates:
+        try:
+            d = _dt.fromisoformat(str(cand["start"]).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        key = d.date().isoformat()
+        if key in seen_dates:
+            continue
+        seen_dates.add(key)
+        # Pull a few options on this proposed date so the offer has >= MIN options
+        # even when only one of the proposed dates is open (like Heidi offering a
+        # couple of times on the day the prospect asked for).
+        for slot in find_compliant_slots_on_date(
+            d, calendar_context=calendar_context, intent=intent,
+            subject=subject, body=body, near_hour=d.hour, limit=MAX_SLOT_OPTIONS,
+        ):
+            if slot["start"] not in seen_starts:
+                seen_starts.add(slot["start"])
+                on_date.append(slot)
+        if len(on_date) >= MAX_SLOT_OPTIONS:
+            break
+    on_date = on_date[:MAX_SLOT_OPTIONS]
+    if on_date:
+        gate = verify_before_kory_approval(
+            slots=on_date, calendar_context=calendar_context,
+            intent=intent, subject=subject, body=body,
+        )
+        if gate.ok:
+            return ScheduleFromContextResult(
+                ok=True, slots=on_date, path="inbound_availability_on_date",
+                status="ok", gate=gate, inbound_notes=notes,
+            )
+
     if invalid:
         return ScheduleFromContextResult(
             ok=False,
