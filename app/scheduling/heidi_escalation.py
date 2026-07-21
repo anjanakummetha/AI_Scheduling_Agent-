@@ -39,10 +39,21 @@ def _notify_kory_scheduling_blocked(
     subject = str(packet.get("subject") or "thread") if packet.get("ok") else "thread"
     sender = str(packet.get("sender") or "sender") if packet.get("ok") else "sender"
     detail = (failure_error or reason or "no preference-compliant time was found").strip()
-    summary = (
-        f"Scheduling needs your input — \"{subject}\" from {sender}. "
-        f"{detail}. Reply here with how you'd like to handle it."
-    )
+    intent = str(packet.get("intent_classification") or "") if packet.get("ok") else ""
+    # Reasoning-based Teams message: explains the specific blocker and offers 2-3
+    # concrete options, rather than a generic "reply here". Falls back to a plain
+    # message if the LLM is unavailable.
+    try:
+        summary = compose_kory_guidance_with_hermes(
+            proposal_id, failure_error=detail, intent=intent
+        )
+    except Exception:
+        summary = ""
+    if not summary or len(summary.strip()) < 20:
+        summary = (
+            f"Scheduling needs your input — \"{subject}\" from {sender}. "
+            f"{detail}. Reply here with how you'd like to handle it."
+        )
     if teams_push_allowed():
         from app.bot.teams_publisher import schedule_teams_scheduling_guidance_push
 

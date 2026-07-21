@@ -92,6 +92,9 @@ def test_create_draft_reply_lexi_uses_reply_all_and_html_update():
             mock_exec.side_effect = [
                 {"data": {"id": "draft-123"}, "log_id": "log-create"},
                 {"data": {}, "log_id": "log-update"},
+                # ensure_kory_cc reads the draft's recipients (Kory not on thread here).
+                {"data": {"toRecipients": [{"emailAddress": {"address": "guest@example.com"}}],
+                          "ccRecipients": []}, "log_id": "log-get"},
                 {"data": {}, "log_id": "log-kory-cc"},
             ]
             with patch(
@@ -109,7 +112,8 @@ def test_create_draft_reply_lexi_uses_reply_all_and_html_update():
                     )
     assert draft_id == "draft-123"
     assert log_id == "log-create"
-    assert mock_exec.call_count == 3
+    # create reply-all + update body + read-recipients (thread check) + kory-cc update
+    assert mock_exec.call_count == 4
     create_call = mock_exec.call_args_list[0]
     assert create_call.args[0] == "OUTLOOK_CREATE_REPLY_ALL_DRAFT"
     update_call = mock_exec.call_args_list[1]
@@ -117,6 +121,8 @@ def test_create_draft_reply_lexi_uses_reply_all_and_html_update():
     body = update_call.args[1]["body"]
     assert body["contentType"] == "html"
     assert "Hi" in body["content"]
-    cc_call = mock_exec.call_args_list[2]
+    get_call = mock_exec.call_args_list[2]
+    assert get_call.args[0] == "OUTLOOK_GET_MESSAGE"  # thread-membership read
+    cc_call = mock_exec.call_args_list[3]
     assert cc_call.args[0] == "OUTLOOK_UPDATE_USER_MAIL_FOLDER_MESSAGE"
     assert "cc_recipients" in cc_call.args[1]

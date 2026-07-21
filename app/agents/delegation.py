@@ -73,6 +73,59 @@ def _extract_emails(text: str) -> list[str]:
     return [m.group(0).lower() for m in re.finditer(r"[\w.+-]+@[\w.-]+\.\w+", text or "")]
 
 
+def _kory_addresses() -> set[str]:
+    addrs = {(settings.kory_cc_email or "").strip().lower()}
+    addrs |= {e.strip().lower() for e in settings.kory_sender_emails}
+    return {a for a in addrs if a and "@" in a}
+
+
+def _to_recipient_addresses(raw_email: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    value = raw_email.get("to_recipients")
+    if isinstance(value, str):
+        out.extend(_extract_emails(value))
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, str):
+                out.extend(_extract_emails(item))
+            elif isinstance(item, dict):
+                addr = item.get("emailAddress") or item.get("address") or {}
+                email = addr.get("address") or addr.get("email") if isinstance(addr, dict) else addr
+                if email:
+                    out.append(str(email).lower())
+    return out
+
+
+def delegation_counterpart(raw_email: dict[str, Any]) -> str:
+    """When Kory delegates (CC's Lexi), the party Lexi schedules with is a To
+    recipient who is neither Kory nor Lexi. Returns "" if none is found."""
+    email, _name = delegation_counterpart_contact(raw_email)
+    return email
+
+
+def delegation_counterpart_contact(raw_email: dict[str, Any]) -> tuple[str, str]:
+    """Counterpart (email, display_name) for a delegation email — the To recipient
+    who isn't Kory or Lexi. display_name is "" when Outlook didn't supply one."""
+    exclude = _kory_addresses() | {a.lower() for a in _lexi_addresses()}
+    value = raw_email.get("to_recipients")
+    items = value if isinstance(value, list) else []
+    for item in items:
+        if isinstance(item, dict):
+            addr_obj = item.get("emailAddress") or item.get("address") or {}
+            if isinstance(addr_obj, dict):
+                email = str(addr_obj.get("address") or addr_obj.get("email") or "").lower()
+                name = str(addr_obj.get("name") or "").strip()
+            else:
+                email, name = str(addr_obj).lower(), ""
+            if email and "@" in email and email not in exclude:
+                return email, name
+        elif isinstance(item, str):
+            for email in _extract_emails(item):
+                if email not in exclude:
+                    return email, ""
+    return "", ""
+
+
 KORY_SCHEDULING_ASK = (
     r"(?:find|get)\s+(?:some\s+)?time",
     r"find us a time",

@@ -394,6 +394,24 @@ def _handle_inbound_stream_locked(raw_email: dict[str, Any]) -> dict[str, Any]:
                 raw_email.get("message_id") or raw_email.get("thread_id") or ""
             ),
         )
+        # If Kory delegated (he's the sender), Lexi schedules with and replies to the
+        # counterpart (a To recipient who isn't Kory/Lexi) — not Kory. Point the thread
+        # sender at the counterpart so the draft greets and addresses them correctly.
+        from app.agents.delegation import (
+            _kory_addresses as _kory_addrs,
+            delegation_counterpart_contact,
+        )
+
+        current_sender = str(bundle.get("sender_email") or bundle.get("sender") or "").lower()
+        if current_sender in _kory_addrs():
+            cp_email, cp_name = delegation_counterpart_contact(raw_email)
+            if cp_email and cp_email != current_sender:
+                with get_lexi_connection() as _conn:
+                    _conn.execute(
+                        "UPDATE email_threads SET sender = ?, sender_email = ? WHERE thread_id = ?",
+                        (cp_name or cp_email, cp_email, thread_id),
+                    )
+                    _conn.commit()
         draft_result = begin_delegation_draft(proposal_id)
         scheduler_processed = draft_result.get("status") == PENDING_APPROVAL
         final_status = str(draft_result.get("status") or final_status)

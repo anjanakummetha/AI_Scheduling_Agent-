@@ -472,6 +472,38 @@ def _is_external_recipient(email: str) -> bool:
     return bool(domain) and domain not in _ORG_EMAIL_DOMAINS
 
 
+def kory_thread_addresses() -> set[str]:
+    """All addresses that count as 'Kory is on this thread'."""
+    addrs = {(settings.kory_cc_email or "").strip().lower()}
+    addrs |= {e.strip().lower() for e in settings.kory_sender_emails}
+    return {a for a in addrs if a and "@" in a}
+
+
+def kory_on_thread(recipients: dict[str, Any]) -> bool:
+    """True when a Kory address is among the To/CC of a message (normalized dict)."""
+    kory = kory_thread_addresses()
+    if not kory:
+        return False
+    present: set[str] = set()
+    for key in ("to_recipients", "cc_recipients"):
+        for item in recipients.get(key) or []:
+            addr = ((item.get("emailAddress") or {}).get("address") or "").strip().lower()
+            if addr:
+                present.add(addr)
+    return bool(kory & present)
+
+
+def _get_lexi_message(message_id: str) -> dict[str, Any]:
+    """Read a message/draft from Lexi's mailbox (for the on-thread CC check)."""
+    result = execute_tool(
+        "OUTLOOK_GET_MESSAGE",
+        {"message_id": message_id, "user_id": "me",
+         "select": ["id", "toRecipients", "ccRecipients"]},
+        role="lexi",
+    )
+    return _coerce_data(result.get("data")) or {}
+
+
 def hubspot_bcc_addresses(to_emails: list[str]) -> list[str]:
     """BCC the HubSpot logging address on outbound mail that reaches an outsider.
 
@@ -553,6 +585,15 @@ def ensure_kory_cc_on_lexi_draft(draft_id: str) -> None:
     if settings.lexi_dry_run or not draft_id or draft_id.startswith("dry-run"):
         return
     kory_cc = merge_kory_cc_addresses()
+    # Skip the Kory CC if he's already a To/CC participant of this reply-all thread
+    # (e.g. the delegation case where Kory CC'd Lexi). If the draft can't be read,
+    # fall back to CC'ing him (better to keep him informed than to drop him).
+    if kory_cc:
+        try:
+            if kory_on_thread(extract_recipient_list(_get_lexi_message(draft_id))):
+                kory_cc = []
+        except Exception:
+            pass
     # hubspot_bcc_enabled is production-only; pass a placeholder external address so
     # the outsider check passes for this inherently-external reply-all context.
     hubspot_bcc = hubspot_bcc_addresses(["counterpart@external.invalid"])
