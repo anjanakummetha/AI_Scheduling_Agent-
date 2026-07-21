@@ -42,7 +42,12 @@ HARD_BLOCKS = [
         "days": ["Monday", "Wednesday", "Friday"],
         "start": "06:30",
         "end": "08:00",
-        "notes": "Non-negotiable. Never override.",
+        "notes": (
+            "Non-negotiable. Never override. Scheduling floor is 8:00 — Kory takes 8:00 AM "
+            "virtual/informal calls while finishing the workout (in-person pushes to 9:30). "
+            "The physical session runs to ~8:30 on the calendar, so an actual "
+            "'KM Personal Training' event will conservatively block 8:00–8:30 via overlap when present."
+        ),
     },
     {
         "name": "Doug (Executive Coach)",

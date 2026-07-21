@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
+from _live_guard import require_live_confirmation
 from app.agents.comms_agent import execute_lexi_approval
 from app.agents.inbound_reply import AWAITING_REPLY_PROMPT, begin_draft_reply
 from app.agents.triage_agent import process_new_email
@@ -283,6 +284,12 @@ def main() -> int:
         help="Stop after scheduler staging (no calendar confirm/email send).",
     )
     args = parser.parse_args()
+
+    # This suite places real sandbox holds and sends a loopback email — gate it.
+    require_live_confirmation(
+        f"place holds and send email against the sandbox mailbox "
+        f"{settings.sandbox_mailbox_email or settings.sandbox_composio_connection_id}"
+    )
 
     llm_live = bool(settings.llm_api_key)
     if not llm_live:

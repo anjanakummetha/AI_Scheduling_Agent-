@@ -1,0 +1,23 @@
+[Unit]
+Description=Lexi read-only API for the CEO dashboard (localhost only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lexi
+Group=lexi
+WorkingDirectory=/opt/lexi
+EnvironmentFile=/opt/lexi/.env.production
+# Read-only /api/v1 (SELECTs on lexi.db). Bound to localhost — never public.
+Environment=LEXI_API_ENABLED=true
+ExecStart=/opt/lexi/.venv/bin/uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8081
+Restart=always
+RestartSec=5
+MemoryMax=512M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lexi-api
+
+[Install]
+WantedBy=multi-user.target

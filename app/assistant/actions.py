@@ -6,7 +6,7 @@ import json
 import traceback
 from typing import Any
 
-from app.config import settings
+from app.config import resolve_lexi_env, safety_posture_summary, settings
 from app.integrations.calendar_holds import place_tentative_hold
 from app.integrations.named_calendars import list_all_calendars, resolve_calendar_name
 from app.integrations.outlook_calendar import has_conflict
@@ -59,6 +59,24 @@ def format_kory_status_brief(status: dict[str, Any]) -> str:
     if not status.get("teams_cards_ready", True):
         lines.append("Teams cards aren't configured yet.")
     return "\n".join(lines)
+
+
+def _safe_cost_rollup() -> dict[str, Any] | None:
+    try:
+        from app.storage.llm_cost_log import cost_rollup
+
+        return cost_rollup(days=30)
+    except Exception:
+        return None
+
+
+def _safe_composio_budget() -> dict[str, Any] | None:
+    try:
+        from app.storage.composio_call_log import budget_status
+
+        return budget_status()
+    except Exception:
+        return None
 
 
 def get_lexi_system_status() -> dict[str, Any]:
@@ -120,6 +138,10 @@ def get_lexi_system_status() -> dict[str, Any]:
         "llm_model": settings.llm_model,
         "learning_summary": recent_feedback_summary(limit=5) or None,
         "safety": safety,
+        "lexi_env": resolve_lexi_env(),
+        "safety_posture": safety_posture_summary(),
+        "llm_cost_30d": _safe_cost_rollup(),
+        "composio_budget": _safe_composio_budget(),
         "ingress": ingress,
         "note": (
             "Internal: outlook_timezone is API parsing only — Kory's home TZ is scheduling_timezone. "

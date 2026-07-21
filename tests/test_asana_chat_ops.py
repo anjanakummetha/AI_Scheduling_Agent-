@@ -12,7 +12,9 @@ from app.integrations.asana_manager import (
 )
 
 
-def test_update_due_date_requires_approval():
+def test_update_due_date_requires_approval(live_writes):
+    # Approval enforcement only applies outside dry-run (dry-run blocks all writes
+    # anyway); live_writes flips dry-run off so the approval gate is what's exercised.
     try:
         update_asana_task(task_gid="t1", due_on="2026-07-20", approved=False)
         assert False, "expected PermissionError"

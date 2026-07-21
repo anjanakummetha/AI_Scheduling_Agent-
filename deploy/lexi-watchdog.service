@@ -1,0 +1,11 @@
+[Unit]
+Description=Lexi health watchdog (restart + alert on unhealthy)
+
+[Service]
+Type=oneshot
+User=lexi
+Group=lexi
+WorkingDirectory=/opt/lexi
+Environment=LEXI_ENV=production
+Environment=LEXI_ENV_FILE=/opt/lexi/.env.production
+ExecStart=/opt/lexi/deploy/watchdog.sh

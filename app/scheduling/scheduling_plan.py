@@ -74,12 +74,11 @@ def build_scheduling_plan(
             ),
         }
         response = client.chat.completions.create(
-            model=settings.llm_model,
+            role="scheduler",
             messages=[
                 {"role": "system", "content": PLAN_SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(payload, default=str)},
             ],
-            temperature=0.1,
         )
         content = response.choices[0].message.content or ""
         parsed = _parse_json_object(content)
@@ -115,12 +114,22 @@ def _merge_llm_plan(
 
     label = parsed.get("window_label")
     if isinstance(label, str) and label.strip():
+        # `plan.window` here is the deterministic rule window — None when the sender's
+        # own email names no timeframe.
+        sender_window = plan.window
         llm_window = infer_scheduling_window(
             subject=f"{subject} {label}",
             body=body,
             now=now,
         )
-        if llm_window:
+        # Guard against the LLM inventing a constraint the sender never stated. When the
+        # email names no timeframe, reject an ungrounded *single-day* LLM window (e.g. a
+        # hallucinated "today"/"tomorrow"): it hard-narrows scheduling to one day and
+        # forces a needless defer to Kory. Multi-day LLM windows don't hard-block, so
+        # they're still honored (they catch date phrasings the regex parser misses).
+        if llm_window and not (
+            sender_window is None and llm_window.start == llm_window.end
+        ):
             plan.window = llm_window
 
     dur = parsed.get("duration_minutes")

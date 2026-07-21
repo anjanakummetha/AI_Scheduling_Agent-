@@ -45,8 +45,23 @@ def _embedded_logo_data_uri() -> str | None:
     return f"data:image/png;base64,{b64}"
 
 
+def lexi_signature_logo_enabled() -> bool:
+    """Whether the sign-off shows the IFG logo at all.
+
+    Removed for now (the inline image rendered distorted). Re-enable by setting a
+    hosted LEXI_SIGNATURE_LOGO_URL or LEXI_SIGNATURE_EMBED_LOGO=true once a clean
+    asset is in place.
+    """
+    if lexi_signature_logo_url() is not None:
+        return True
+    return os.getenv("LEXI_SIGNATURE_EMBED_LOGO", "false").lower() in {"1", "true", "yes"}
+
+
 def resolve_lexi_signature_logo_src(*, prefer_cid: bool = False) -> str | None:
-    """Hosted HTTPS URL (universal) or inline CID for draft+attachment send."""
+    """Hosted HTTPS URL (universal) or inline CID for draft+attachment send.
+    Returns None when the logo is disabled (the sign-off then has no image)."""
+    if not lexi_signature_logo_enabled():
+        return None
     url = lexi_signature_logo_url()
     if url and not prefer_cid:
         return url
@@ -59,6 +74,8 @@ def resolve_lexi_signature_logo_src(*, prefer_cid: bool = False) -> str | None:
 
 def build_lexi_inline_logo_attachment() -> dict[str, Any] | None:
     """Microsoft Graph inline attachment for the IFG logo (works in Gmail/Outlook)."""
+    if not lexi_signature_logo_enabled():
+        return None
     path = lexi_signature_logo_path()
     if not path.is_file():
         return None
@@ -128,14 +145,24 @@ def build_lexi_html_signature_block(*, use_cid: bool = True) -> str:
         '<a href="mailto:lexi@iconicfounders.com" '
         'style="color:#0563c1;text-decoration:underline;">lexi@iconicfounders.com</a>'
     )
+    contact = (
+        '<div style="font-size:15px;font-weight:bold;color:#000000;margin:0 0 4px 0;">Lexi</div>'
+        f'<div style="margin:0 0 4px 0;">{company}</div>'
+        '<div style="margin:0 0 4px 0;color:#333333;">Assistant to Kory Mitchell</div>'
+        f'<div style="margin:0;">{email}</div>'
+    )
+    if not logo_cell:
+        # No logo — clean single-column block (no empty cell or divider).
+        return (
+            '<table cellpadding="0" cellspacing="0" border="0" role="presentation" '
+            'style="margin-top:20px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333333;line-height:1.4;">'
+            f'<tr><td style="vertical-align:middle;">{contact}</td></tr></table>'
+        )
     return f"""<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="margin-top:20px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333333;line-height:1.4;">
   <tr>
     <td style="padding:0 16px 0 0;vertical-align:middle;">{logo_cell}</td>
     <td style="vertical-align:middle;border-left:1px solid #cccccc;padding-left:16px;">
-      <div style="font-size:15px;font-weight:bold;color:#000000;margin:0 0 4px 0;">Lexi</div>
-      <div style="margin:0 0 4px 0;">{company}</div>
-      <div style="margin:0 0 4px 0;color:#333333;">Assistant to Kory Mitchell</div>
-      <div style="margin:0;">{email}</div>
+      {contact}
     </td>
   </tr>
 </table>"""

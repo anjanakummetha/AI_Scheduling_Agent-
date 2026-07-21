@@ -90,6 +90,9 @@ class ScheduleResult:
     kory_message: str = ""
     suggested_guidance: str | None = None
     window_expanded: bool = False
+    # The plan the engine actually scheduled against (already travel-shifted). Threaded
+    # to the pre-approval gate so it doesn't re-derive a conflicting, un-shifted window.
+    plan: Any = None
 
 
 def process_proposal_schedule(proposal_id: int) -> bool:
@@ -174,7 +177,11 @@ def _advance_proposal(conn: sqlite3.Connection, proposal: PendingProposal) -> bo
                 f"rules: {rule_validation.violations}"
             )
 
-        plan = build_scheduling_plan(
+        # Reuse the plan the engine actually scheduled against (already travel-shifted).
+        # Rebuilding here re-parsed relative windows like "next week" WITHOUT the travel
+        # shift, so the gate rejected valid post-travel slots as "outside requested window"
+        # and over-deferred to Kory. Fall back to a fresh plan only for non-engine paths.
+        plan = schedule.plan or build_scheduling_plan(
             subject=proposal.subject or "",
             body=proposal.scheduling_body(),
             intent=proposal.intent_classification,
@@ -398,6 +405,7 @@ def _build_schedule(
         confidence_score=0.92,
         source=source_label,
         window_expanded=window_expanded,
+        plan=result.plan,
     )
 
 

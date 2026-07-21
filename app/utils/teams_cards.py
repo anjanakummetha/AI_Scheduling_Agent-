@@ -67,7 +67,9 @@ def generate_approval_card(
         body=str(email_record.get("raw_body") or ""),
     )
     meeting_type_label = str(proposal_record.get("meeting_type_label") or "").strip()
-    type_label = spec.card_type_label()
+    # Prefer the scheduler's already-computed label on the proposal; fall back to the
+    # coarser label re-derived from the subject only when the record has none.
+    type_label = meeting_type_label or spec.card_type_label()
     if type_label:
         body.append(
             {

@@ -1,6 +1,6 @@
 # Lexi Test Results Report
 
-**Generated:** 2026-06-23 02:36 UTC
+**Generated:** 2026-07-21 19:09 UTC
 **Scope:** Full project except Teams/Azure connection (deferred to deploy day)
 
 ## Summary
@@ -8,9 +8,9 @@
 | Metric | Count |
 |--------|-------|
 | Total cases | 30 |
-| PASS | 16 |
+| PASS | 15 |
 | FAIL | 0 |
-| SKIP | 14 |
+| SKIP | 15 |
 
 **Overall:** ALL PASSED
 
@@ -26,7 +26,7 @@
 
 | ID | Test | Status | Detail |
 |----|------|--------|--------|
-| P1-01 | delegation_only silences non-delegation mail | PASS | status=no_reply_needed |
+| P1-01 | Inbound reply-prompt decision (live LLM) | SKIP | skipped |
 | P1-02 | Scheduler not auto-run on ingest | PASS | False |
 | P1-03 | Non-scheduling email creates proposal | PASS | id=3 |
 | P1-04 | Decline reply path | PASS | no_reply_needed |

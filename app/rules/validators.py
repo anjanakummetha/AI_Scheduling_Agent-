@@ -288,6 +288,7 @@ def validate_proposal_slots(
     intent: str | None = None,
     meeting_format: str | None = None,
     urgent: bool = False,
+    east_coast: bool = False,
     busy_events: list[dict[str, Any]] | None = None,
     preferences: SchedulingPreferences | None = None,
     batch_slots: list[dict[str, str]] | None = None,
@@ -333,7 +334,8 @@ def validate_proposal_slots(
         if _is_travel_day(start_local, busy) and not urgent:
             result.valid = False
             result.violations.append(
-                f"{prefix}: Kory is traveling this day — no new meetings (2–3 critical check-ins only)."
+                f"{prefix}: Kory is traveling this day — hold for Kory. Travel weeks are "
+                f"2–3 critical check-ins only, so confirm with him before offering a time."
             )
 
         result.rules_checked.append("weekend_availability")
@@ -364,21 +366,21 @@ def validate_proposal_slots(
                 result.valid = False
                 result.violations.append(f"{prefix}: earliest on {weekday} is {earliest} for this format.")
         elif weekday in kory_rules.EARLY_START_DAYS:
-            earliest = day_rules.get("earliest_default", "09:00")
-            eh, em = _parse_hhmm(earliest)
-            if start_local.hour < eh or (start_local.hour == eh and start_local.minute < em):
-                # Kory's written coffee rules explicitly prefer 8:30/9:00 AM, including Tue/Thu.
-                # Keep the stricter early-start guard for other meeting types.
-                if intent_key == "coffee" and start_local.strftime("%H:%M") in _preferred_coffee_times():
-                    pass
-                elif not urgent and start_local.hour < 7:
-                    result.valid = False
-                    result.violations.append(
-                        f"{prefix}: Tue/Thu before 7 AM only for East Coast / urgent requests."
-                    )
-                elif start_local.hour < eh:
-                    result.valid = False
-                    result.violations.append(f"{prefix}: earliest on {weekday} is {earliest}.")
+            # Kory's spec for Tue/Thu: 7:00 AM is an acceptable occasional early start;
+            # 6:00 AM is allowed for East-Coast contacts or urgent requests; anything
+            # earlier is out. Coffee still prefers its 8:30/9:00 windows.
+            if intent_key == "coffee" and start_local.strftime("%H:%M") in _preferred_coffee_times():
+                pass
+            elif start_local.hour < 6:
+                result.valid = False
+                result.violations.append(
+                    f"{prefix}: earliest on {weekday} is 6:00 AM (East Coast) / 7:00 AM."
+                )
+            elif start_local.hour == 6 and not (urgent or east_coast):
+                result.valid = False
+                result.violations.append(
+                    f"{prefix}: 6 AM on {weekday} is only for East Coast / urgent requests."
+                )
 
         result.rules_checked.append("happy_hour_rules")
         if intent_key == "happy_hour":
@@ -389,13 +391,9 @@ def validate_proposal_slots(
                 result.warnings.append(f"{prefix}: happy hour on Friday is discouraged.")
             week = _week_key(start_local)
             existing_hh = _count_weekly_pattern(busy, week, re.compile(r"happy\s*hour", re.I))
-            proposed_hh = sum(
-                1
-                for s in slots[:index]
-                if intent_key == "happy_hour"
-                and _week_key(local_dt(parse_iso_datetime(str(s.get("start") or "")) or start_local))
-                == week
-            ) + (1 if intent_key == "happy_hour" else 0)
+            # These slots are alternative times for ONE happy hour — only one will be
+            # booked, so the new meeting counts once, not once per offered option.
+            proposed_hh = 1
             if existing_hh + proposed_hh > prefs.happy_hour_max_per_week:
                 result.valid = False
                 result.violations.append(
@@ -408,13 +406,8 @@ def validate_proposal_slots(
             existing_din = _count_weekly_pattern(
                 busy, week, re.compile(r"\bdinner\b|dinner request", re.I)
             )
-            proposed_din = sum(
-                1
-                for s in slots[:index]
-                if _week_key(local_dt(parse_iso_datetime(str(s.get("start") or "")) or start_local))
-                == week
-                and intent_key in DINNER_INTENTS
-            ) + (1 if intent_key in DINNER_INTENTS else 0)
+            # Alternative times for ONE dinner — counts once, not per offered option.
+            proposed_din = 1
             if existing_din + proposed_din > prefs.dinner_max_per_week:
                 result.valid = False
                 result.violations.append(

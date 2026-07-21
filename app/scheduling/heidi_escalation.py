@@ -14,6 +14,61 @@ HEIDI_ESCALATION_PREFIX = "HEIDI_ESCALATION"
 NEEDS_HEIDI = "needs_heidi"
 
 
+def heidi_escalation_enabled() -> bool:
+    """Off by default: blocked scheduling notifies Kory in Teams, not Heidi.
+
+    The Heidi path is kept behind this flag for later re-enable.
+    """
+    import os
+
+    return os.getenv("LEXI_HEIDI_ESCALATION_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _notify_kory_scheduling_blocked(
+    proposal_id: int,
+    *,
+    reason: str = "",
+    failure_error: str = "",
+) -> dict[str, Any]:
+    """Route a blocked-scheduling situation to Kory in Teams (Heidi escalation disabled)."""
+    packet = build_scheduling_context_packet(proposal_id)
+    subject = str(packet.get("subject") or "thread") if packet.get("ok") else "thread"
+    sender = str(packet.get("sender") or "sender") if packet.get("ok") else "sender"
+    detail = (failure_error or reason or "no preference-compliant time was found").strip()
+    summary = (
+        f"Scheduling needs your input — \"{subject}\" from {sender}. "
+        f"{detail}. Reply here with how you'd like to handle it."
+    )
+    if teams_push_allowed():
+        from app.bot.teams_publisher import schedule_teams_scheduling_guidance_push
+
+        schedule_teams_scheduling_guidance_push(proposal_id, summary=summary)
+    _mark_needs_kory(proposal_id, summary)
+    return {
+        "ok": True,
+        "path": "kory_notification",
+        "proposal_id": proposal_id,
+        "summary": summary,
+        "teams_pushed": teams_push_allowed(),
+    }
+
+
+def _mark_needs_kory(proposal_id: int, summary: str) -> None:
+    try:
+        with get_lexi_connection() as conn:
+            conn.execute(
+                "UPDATE proposals SET status = ? WHERE id = ?",
+                ("needs_kory", proposal_id),
+            )
+            conn.commit()
+    except Exception:
+        pass  # never block notification on a status write
+
+
 def resolve_heidi_email() -> str:
     import os
 
@@ -94,7 +149,13 @@ def escalate_to_heidi(
     reason: str = "",
     failure_error: str = "",
 ) -> dict[str, Any]:
-    """First preference on blocked scheduling: email Heidi (staged when dry-run)."""
+    """Blocked scheduling handler. Default: notify Kory in Teams. When
+    LEXI_HEIDI_ESCALATION_ENABLED=true: email Heidi (staged when dry-run)."""
+    if not heidi_escalation_enabled():
+        return _notify_kory_scheduling_blocked(
+            proposal_id, reason=reason, failure_error=failure_error
+        )
+
     packet = build_scheduling_context_packet(proposal_id)
     if packet.get("ok"):
         packet["scheduler_failure"] = (failure_error or reason or "").strip()

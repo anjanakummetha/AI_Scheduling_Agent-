@@ -21,10 +21,20 @@ from scripts.init_lexi_db import init_lexi_db
 logger = logging.getLogger(__name__)
 
 
+def _maybe_mount_api_v1(app: FastAPI) -> None:
+    """Mount the read-only /api/v1 router for the CEO dashboard (localhost only)."""
+    if os.getenv("LEXI_API_ENABLED", "false").lower() in {"1", "true", "yes"}:
+        from app.api_v1 import router as api_v1_router
+
+        app.include_router(api_v1_router)
+        logger.info("Lexi read-only /api/v1 enabled (dashboard consumer).")
+
+
 def create_app() -> FastAPI:
     if os.getenv("LEXI_DASHBOARD_ENABLED", "false").lower() not in {"1", "true", "yes"}:
-        app = FastAPI(title="Lexi (disabled)")
+        app = FastAPI(title="Lexi (headless)")
         init_lexi_db()
+        _maybe_mount_api_v1(app)
 
         @app.get("/")
         def disabled() -> dict[str, str]:
@@ -33,7 +43,8 @@ def create_app() -> FastAPI:
                 "message": (
                     "Lexi FastAPI server is not used in production. "
                     "Run Hermes gateway for Teams and embed Lexi worker via MCP. "
-                    "Set LEXI_DASHBOARD_ENABLED=true for optional audit UI."
+                    "Set LEXI_DASHBOARD_ENABLED=true for optional audit UI, "
+                    "or LEXI_API_ENABLED=true for the read-only /api/v1 (dashboard)."
                 ),
             }
 
@@ -45,6 +56,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Lexi Audit Dashboard (debug)")
     app.mount("/static", StaticFiles(directory="app/dashboard/static"), name="static")
     app.include_router(dashboard_router)
+    _maybe_mount_api_v1(app)
 
     @app.get("/api/health")
     def health() -> dict[str, object]:

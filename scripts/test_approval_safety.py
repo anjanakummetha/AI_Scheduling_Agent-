@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
+from app.config import settings
 from app.integrations.outlook_email import send_outbound_email
 from app.orchestrator import evaluate_auto_execute_policy
 from app.safety.approval_gate import (
@@ -33,6 +35,28 @@ def main() -> int:
         status = "PASS" if ok else "FAIL"
         print(f"  [{status}] {name}" + (f" — {detail}" if detail else ""))
 
+    dry_run = settings.lexi_dry_run
+    has_real_composio = bool(os.getenv("COMPOSIO_API_KEY", "").strip())
+
+    # SAFETY: this suite attempts outbound sends to exercise the approval gate.
+    # With dry-run OFF and a real Composio key present, an approved-path send could
+    # deliver a real email. Refuse to run in that combination — it is only ever
+    # intended for keyless CI (dry-run off, no keys) or local dry-run (simulated).
+    if not dry_run and has_real_composio:
+        print(
+            "\n[ABORT] LEXI_DRY_RUN is off AND a real COMPOSIO_API_KEY is set — "
+            "refusing to run send-attempting safety checks (real-send risk).\n"
+            "Run this only in keyless CI (dry-run off) or with dry-run on.\n"
+        )
+        return 1
+
+    # The approval gate raises only when dry-run is OFF (dry-run bypasses it by
+    # design — nothing is sent). So the "blocked without approval" assertions are
+    # only meaningful with dry-run off (keyless CI). Under dry-run they are skipped
+    # here; they are covered hermetically by tests/test_approval_gate_lexi.py and
+    # tests/test_recipient_allowlist.py.
+    gate_active = not dry_run
+
     print("\n=== Approval safety gates ===\n")
 
     check("kory_approves_all (rules.py)", kory_approves_all())
@@ -42,28 +66,32 @@ def main() -> int:
     should, reason = evaluate_auto_execute_policy(999999)
     check("orchestrator auto_execute blocked", not should, reason)
 
-    try:
-        send_outbound_email(
-            to_email="blocked@example.com",
-            subject="should not send",
-            body="test",
-            approved_send=False,
-        )
-        check("direct send without approval blocked", False, "send succeeded unexpectedly")
-    except PermissionError as exc:
-        check("direct send without approval blocked", True, str(exc)[:80])
+    if not gate_active:
+        print("  [SKIP] send-without-approval gate checks — dry-run bypasses the gate; "
+              "covered by tests/test_approval_gate_lexi.py (run keyless CI with LEXI_DRY_RUN=false to exercise here)")
+    else:
+        try:
+            send_outbound_email(
+                to_email="blocked@example.com",
+                subject="should not send",
+                body="test",
+                approved_send=False,
+            )
+            check("direct send without approval blocked", False, "send succeeded unexpectedly")
+        except PermissionError as exc:
+            check("direct send without approval blocked", True, str(exc)[:80])
 
-    try:
-        send_outbound_email(
-            to_email="blocked@example.com",
-            subject="kory no approval",
-            body="test",
-            approved_send=False,
-            send_channel="kory",
-        )
-        check("kory channel without approval blocked", False, "send succeeded unexpectedly")
-    except PermissionError as exc:
-        check("kory channel without approval blocked", True, str(exc)[:80])
+        try:
+            send_outbound_email(
+                to_email="blocked@example.com",
+                subject="kory no approval",
+                body="test",
+                approved_send=False,
+                send_channel="kory",
+            )
+            check("kory channel without approval blocked", False, "send succeeded unexpectedly")
+        except PermissionError as exc:
+            check("kory channel without approval blocked", True, str(exc)[:80])
 
     try:
         send_outbound_email(
@@ -88,17 +116,18 @@ def main() -> int:
         else:
             check("kory channel approved send authorized", True, f"reached send: {type(exc).__name__}")
 
-    try:
-        send_outbound_email(
-            to_email="blocked@example.com",
-            subject="lexi no approval",
-            body="test",
-            approved_send=False,
-            send_channel="lexi",
-        )
-        check("lexi channel without approval blocked", False, "send succeeded unexpectedly")
-    except PermissionError as exc:
-        check("lexi channel without approval blocked", True, str(exc)[:80])
+    if gate_active:
+        try:
+            send_outbound_email(
+                to_email="blocked@example.com",
+                subject="lexi no approval",
+                body="test",
+                approved_send=False,
+                send_channel="lexi",
+            )
+            check("lexi channel without approval blocked", False, "send succeeded unexpectedly")
+        except PermissionError as exc:
+            check("lexi channel without approval blocked", True, str(exc)[:80])
 
     try:
         send_outbound_email(

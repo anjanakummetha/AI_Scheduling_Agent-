@@ -1,12 +1,19 @@
-composio
-openai
-python-dotenv
-fastapi
-uvicorn
-jinja2
-pyyaml
-mcp
-botbuilder-core
-botbuilder-schema
-botframework-connector
-aiohttp
+# Lexi runtime dependencies — pinned for reproducible VPS builds (plan Phase 4).
+# Regenerate after intentional upgrades: pip install -U <pkg> && pip freeze | grep <pkg>
+anthropic==0.117.0
+composio==0.13.1
+composio-client==1.39.0
+openai==2.38.0
+python-dotenv==1.2.2
+fastapi==0.136.3
+uvicorn==0.48.0
+jinja2==3.1.6
+pyyaml==6.0.3
+mcp==1.27.1
+botbuilder-core==4.17.1
+botbuilder-schema==4.17.1
+botframework-connector==4.17.1
+aiohttp==3.13.5
+
+# Test-only (also installed explicitly in CI; harmless in prod):
+pytest==9.1.1

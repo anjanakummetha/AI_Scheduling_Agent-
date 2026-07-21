@@ -173,8 +173,10 @@ def _notify_kory_24h_reminder(
     sender: str,
     status: str,
 ) -> None:
-    if settings.lexi_suppress_teams_push:
-        logger.info("24h reminder suppressed (LEXI_SUPPRESS_TEAMS_PUSH) proposal=%s", proposal_id)
+    from app.safety.outbound_guard import teams_push_allowed
+
+    if not teams_push_allowed():
+        logger.info("24h reminder not pushed (dry-run/suppressed/teams-off) proposal=%s", proposal_id)
         return
     try:
         from app.bot.teams_format import display_sender, display_subject
@@ -200,8 +202,10 @@ def _notify_kory_24h_reminder(
 
 
 def _notify_daily_briefing(message: str, *, day_key: str) -> None:
-    if settings.lexi_suppress_teams_push:
-        logger.info("Daily briefing suppressed for %s", day_key)
+    from app.safety.outbound_guard import teams_push_allowed
+
+    if not teams_push_allowed():
+        logger.info("Daily briefing not pushed (dry-run/suppressed/teams-off) for %s", day_key)
         return
     try:
         from app.bot.teams_publisher import push_approval_text_to_teams

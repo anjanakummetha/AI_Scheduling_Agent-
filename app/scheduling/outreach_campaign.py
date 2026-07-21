@@ -462,12 +462,73 @@ def send_outreach_campaign(*, campaign_id: str, approved: bool = False, batch_si
             ),
         }
 
-    # Live send implementation reserved — not used while blocked.
+    # Live send: dispatch staged drafts in a wave. Every send still routes through
+    # send_outbound_email → execute_tool, so dry-run, Kory-outbound-block, the
+    # recipient allowlist, and Kory-space-read-only all still apply per-message.
+    from app.integrations.outlook_email import send_outbound_email
+
+    with get_lexi_connection() as conn:
+        _ensure_tables(conn)
+        rows = conn.execute(
+            """
+            SELECT draft_id, recipient_email, subject, body
+            FROM outreach_drafts
+            WHERE campaign_id = ? AND status = 'approved'
+            ORDER BY rowid LIMIT ?
+            """,
+            (campaign_id, int(batch_size)),
+        ).fetchall()
+
+    sent = 0
+    failed = 0
+    errors: list[dict[str, str]] = []
+    for row in rows:
+        to_email = str(row["recipient_email"])
+        try:
+            msg_id, _log = send_outbound_email(
+                to_email=to_email,
+                subject=str(row["subject"]),
+                body=str(row["body"]),
+                approved_send=True,
+                send_channel="kory",
+            )
+            with get_lexi_connection() as conn:
+                conn.execute(
+                    "UPDATE outreach_drafts SET status = 'sent', outlook_draft_id = ? "
+                    "WHERE draft_id = ?",
+                    (msg_id or "", str(row["draft_id"])),
+                )
+                conn.commit()
+            sent += 1
+        except Exception as exc:  # one bad recipient shouldn't abort the wave
+            failed += 1
+            errors.append({"email": to_email, "error": str(exc)[:160]})
+
+    remaining = _staged_draft_count(campaign_id)
     return {
-        "ok": False,
-        "error": "Live outreach send path not enabled in this build.",
+        "ok": failed == 0,
         "campaign_id": campaign_id,
+        "sent": sent,
+        "failed": failed,
+        "remaining_staged": remaining,
+        "errors": errors[:10],
+        "kory_message": (
+            f"Outreach `{campaign_id}`: sent {sent}"
+            + (f", {failed} failed" if failed else "")
+            + (f", {remaining} still staged (run again for the next wave)." if remaining else ".")
+        ),
     }
+
+
+def _staged_draft_count(campaign_id: str) -> int:
+    """Approved-but-unsent drafts remaining for this campaign."""
+    with get_lexi_connection() as conn:
+        _ensure_tables(conn)
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM outreach_drafts WHERE campaign_id = ? AND status = 'approved'",
+            (campaign_id,),
+        ).fetchone()
+    return int(row["c"] or 0)
 
 
 def remove_outreach_recipient(*, campaign_id: str, email: str) -> dict[str, Any]:

@@ -35,6 +35,7 @@ def test_resolve_lexi_reply_message_id_picks_kory_delegation_anchor():
     ]
 
     with patch("app.integrations.outlook_email.settings") as mock_settings:
+        mock_settings.lexi_dry_run = False  # exercise the real resolve path, not the dry-run stub
         mock_settings.kory_sender_emails = ("kory.mitchell@iconicfounders.com",)
         mock_settings.lexi_mailbox_email = "lexi@iconicfounders.com"
         with patch("app.integrations.composio_client.execute_tool") as mock_exec:
@@ -68,6 +69,7 @@ def test_pick_lexi_delegation_anchor_prefers_kory_to_external():
         },
     ]
     with patch("app.integrations.outlook_email.settings") as mock_settings:
+        mock_settings.lexi_dry_run = False  # exercise the real resolve path, not the dry-run stub
         mock_settings.kory_sender_emails = ("kory.mitchell@iconicfounders.com",)
         mock_settings.lexi_mailbox_email = "lexi@iconicfounders.com"
         anchor = _pick_lexi_delegation_anchor(

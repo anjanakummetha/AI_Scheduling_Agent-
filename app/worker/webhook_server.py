@@ -51,17 +51,44 @@ async def _composio_webhook_handler(request: web.Request) -> web.Response:
 async def _health_handler(_request: web.Request) -> web.Response:
     from app.bot.teams_conversation_store import load_conversation_reference, teams_delivery_ready
     from app.config import settings
+    from app.storage.heartbeat import heartbeat_age_seconds
 
-    return web.json_response(
-        {
-            "status": "ok",
-            "service": "lexi-worker",
-            "webhook_path": WEBHOOK_PATH,
-            "lexi_write_mode": settings.lexi_write_mode,
-            "teams_cards_ready": teams_delivery_ready(),
-            "teams_conversation_captured": load_conversation_reference() is not None,
-        }
-    )
+    # DB write check.
+    db_ok = True
+    try:
+        from app.storage.lexi_db import get_lexi_connection
+
+        with get_lexi_connection() as conn:
+            conn.execute("SELECT 1").fetchone()
+    except Exception:
+        db_ok = False
+
+    age = heartbeat_age_seconds()
+    # Stale if the orchestrator hasn't cycled in > 5 min (well beyond the 30s interval).
+    heartbeat_stale = age is not None and age > 300
+    healthy = db_ok and not heartbeat_stale
+
+    budget = None
+    try:
+        from app.storage.composio_call_log import budget_status
+
+        budget = budget_status()
+    except Exception:
+        pass
+
+    payload = {
+        "status": "ok" if healthy else "degraded",
+        "service": "lexi-worker",
+        "webhook_path": WEBHOOK_PATH,
+        "lexi_write_mode": settings.lexi_write_mode,
+        "db_writable": db_ok,
+        "heartbeat_age_seconds": round(age, 1) if age is not None else None,
+        "heartbeat_stale": heartbeat_stale,
+        "composio_budget": budget,
+        "teams_cards_ready": teams_delivery_ready(),
+        "teams_conversation_captured": load_conversation_reference() is not None,
+    }
+    return web.json_response(payload, status=200 if healthy else 503)
 
 
 def _build_app() -> web.Application:
