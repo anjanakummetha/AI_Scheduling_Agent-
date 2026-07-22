@@ -20,6 +20,7 @@ export LEXI_KORY_SPACE_READ_ONLY=true    # never write Kory's Outlook/calendar
 export LEXI_KORY_OUTBOUND_BLOCKED=true
 export LEXI_CC_KORY_ENABLED=false        # do not CC Kory during testing
 export LEXI_TEAMS_ENABLED=true           # Teams on
+export LEXI_TEAMS_TEXT_ONLY=false         # interactive Adaptive Cards (editable draft + Send/Discard)
 export LEXI_SUPPRESS_TEAMS_PUSH=false
 export LEXI_FORCE_TEAMS_PUSH=true        # push cards to Teams despite dry-run (UAT only)
 export LEXI_EMBED_WORKER=true

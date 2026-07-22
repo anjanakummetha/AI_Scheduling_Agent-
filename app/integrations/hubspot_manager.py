@@ -455,12 +455,13 @@ def deals_snapshot_for_brief(*, limit: int = 8) -> dict[str, Any]:
         amount = deal.get("amount")
         amt = f" · ${amount}" if amount not in (None, "") else ""
         lines.append(
-            f"• {deal.get('dealname') or 'Untitled'} — {deal.get('dealstage') or '?'}{amt}"
+            f"• **{deal.get('dealname') or 'Untitled'}** — {deal.get('dealstage') or '?'}{amt}"
         )
+        lines.append("")  # blank line between items (Teams markdown needs it)
     return {
         "ok": True,
         "deals": open_deals[:limit],
-        "kory_message": "\n".join(lines),
+        "kory_message": "\n".join(lines).rstrip(),
     }
 
 
