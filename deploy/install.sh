@@ -50,7 +50,9 @@ sudo cp deploy/lexi-watchdog.service /etc/systemd/system/lexi-watchdog.service
 sudo cp deploy/lexi-watchdog.timer   /etc/systemd/system/lexi-watchdog.timer
 sudo cp deploy/lexi-backup.service   /etc/systemd/system/lexi-backup.service
 sudo cp deploy/lexi-backup.timer     /etc/systemd/system/lexi-backup.timer
-[[ "${INSTALL_GATEWAY}" == "1" ]] && sudo cp deploy/lexi-gateway.service /etc/systemd/system/lexi-gateway.service
+if [[ "${INSTALL_GATEWAY}" == "1" ]]; then
+  sudo cp deploy/lexi-gateway.service /etc/systemd/system/lexi-gateway.service
+fi
 sudo systemctl daemon-reload
 
 echo "==> Enabling + (re)starting services"
