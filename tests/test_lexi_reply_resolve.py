@@ -35,6 +35,7 @@ def test_resolve_lexi_reply_message_id_picks_kory_delegation_anchor():
     ]
 
     with patch("app.integrations.outlook_email.settings") as mock_settings:
+        mock_settings.lexi_dry_run = False  # exercise the real resolve path, not the dry-run stub
         mock_settings.kory_sender_emails = ("kory.mitchell@iconicfounders.com",)
         mock_settings.lexi_mailbox_email = "lexi@iconicfounders.com"
         with patch("app.integrations.composio_client.execute_tool") as mock_exec:
@@ -68,6 +69,7 @@ def test_pick_lexi_delegation_anchor_prefers_kory_to_external():
         },
     ]
     with patch("app.integrations.outlook_email.settings") as mock_settings:
+        mock_settings.lexi_dry_run = False  # exercise the real resolve path, not the dry-run stub
         mock_settings.kory_sender_emails = ("kory.mitchell@iconicfounders.com",)
         mock_settings.lexi_mailbox_email = "lexi@iconicfounders.com"
         anchor = _pick_lexi_delegation_anchor(
@@ -83,11 +85,16 @@ def test_create_draft_reply_lexi_uses_reply_all_and_html_update():
         mock_settings.lexi_dry_run = False
         mock_settings.lexi_write_mode = "production"
         mock_settings.sandbox_email_loopback = False
-        mock_settings.kory_sender_emails = ("kory.mitchell@iconicfounders.com",)
+        mock_settings.cc_kory_enabled = True
+        mock_settings.kory_cc_email = "kory.mitchell@iconicfounders.com"
+        mock_settings.hubspot_bcc_enabled = False
         with patch("app.integrations.outlook_email.execute_tool") as mock_exec:
             mock_exec.side_effect = [
                 {"data": {"id": "draft-123"}, "log_id": "log-create"},
                 {"data": {}, "log_id": "log-update"},
+                # ensure_kory_cc reads the draft's recipients (Kory not on thread here).
+                {"data": {"toRecipients": [{"emailAddress": {"address": "guest@example.com"}}],
+                          "ccRecipients": []}, "log_id": "log-get"},
                 {"data": {}, "log_id": "log-kory-cc"},
             ]
             with patch(
@@ -105,7 +112,8 @@ def test_create_draft_reply_lexi_uses_reply_all_and_html_update():
                     )
     assert draft_id == "draft-123"
     assert log_id == "log-create"
-    assert mock_exec.call_count == 3
+    # create reply-all + update body + read-recipients (thread check) + kory-cc update
+    assert mock_exec.call_count == 4
     create_call = mock_exec.call_args_list[0]
     assert create_call.args[0] == "OUTLOOK_CREATE_REPLY_ALL_DRAFT"
     update_call = mock_exec.call_args_list[1]
@@ -113,6 +121,8 @@ def test_create_draft_reply_lexi_uses_reply_all_and_html_update():
     body = update_call.args[1]["body"]
     assert body["contentType"] == "html"
     assert "Hi" in body["content"]
-    cc_call = mock_exec.call_args_list[2]
+    get_call = mock_exec.call_args_list[2]
+    assert get_call.args[0] == "OUTLOOK_GET_MESSAGE"  # thread-membership read
+    cc_call = mock_exec.call_args_list[3]
     assert cc_call.args[0] == "OUTLOOK_UPDATE_USER_MAIL_FOLDER_MESSAGE"
     assert "cc_recipients" in cc_call.args[1]

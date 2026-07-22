@@ -17,15 +17,29 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
 
       - name: Initialize database
         run: python scripts/init_lexi_db.py
 
+      - name: Pytest (hermetic — no real Composio/LLM; live tests excluded)
+        run: python -m pytest -q -m "not live"
+
       - name: Run test suite (CI — no Composio/LLM keys)
         run: python scripts/test_kory_phase_suite.py --skip-live-llm --ci
 
+      # The approval gate only raises when dry-run is OFF, so exercise it that way.
+      # This is safe ONLY here: CI has no Composio key, so no real email can be sent
+      # (the send path errors out harmlessly). The script itself hard-aborts if it
+      # ever sees dry-run off together with a real Composio key. The allowlisted
+      # recipient lets the approved path reach the (keyless) send call.
       - name: Approval safety gates
+        env:
+          LEXI_DRY_RUN: "false"
+          LEXI_ALLOWED_RECIPIENTS: "pilot@example.com"
+          LEXI_KORY_OUTBOUND_BLOCKED: "true"
         run: python scripts/test_approval_safety.py
 
 # To run live Composio tests in CI, add repository secrets and a separate workflow job.

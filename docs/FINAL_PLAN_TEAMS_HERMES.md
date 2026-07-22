@@ -1,5 +1,9 @@
 # Lexi + Hermes — Final Plan (Teams → Hermes, Lindy-class scheduling)
 
+> ⚠️ **Historical design doc.** The production deploy runbook is `deploy/README.md`
+> (single host `srv1686061.hstgr.cloud`, `lexi-gateway.service` for Teams). ngrok
+> references here are the local-pilot path, not the production topology.
+
 **Status:** FINAL PLAN — implement only after approval.  
 **Date:** 2026-06-10  
 **Audience:** Kory pilot + engineering.

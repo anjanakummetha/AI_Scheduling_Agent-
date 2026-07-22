@@ -627,7 +627,12 @@ def sender_first_name(sender: str | None) -> str:
 
 
 _BLOCKED_SIGNATURE_NAMES = frozenset(
-    {"body", "html", "div", "span", "table", "there", "unknown", "hi", "hello"}
+    {
+        "body", "html", "div", "span", "table", "there", "unknown", "hi", "hello",
+        # Sign-off words must never be mistaken for the recipient's name.
+        "thanks", "thank", "thankyou", "best", "regards", "cheers",
+        "sincerely", "warmly", "br", "kind", "many",
+    }
 )
 
 

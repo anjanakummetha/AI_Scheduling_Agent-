@@ -52,7 +52,8 @@ class TeamsApprovalCardTests(unittest.TestCase):
             for block in card.get("body", [])
             if block.get("type") == "TextBlock"
         ]
-        assert any("Type: Intro" in text for text in meta_blocks)
+        # Core intent: the card shows the meeting TYPE (an intro variant), never a priority.
+        assert any(text.startswith("Type:") and "Intro" in text for text in meta_blocks)
         assert not any("Priority" in text for text in meta_blocks)
         card = generate_approval_card(
             {"id": 3, "drafted_reply": "Hello", "proposed_slots": []},

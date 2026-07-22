@@ -20,6 +20,32 @@ from app.storage.lexi_db import get_lexi_connection
 import rules as kory_rules
 
 
+def _resolve_greeting_name(stored_name: str | None, sender_email: str, body: str) -> str:
+    """Greeting name for the counterpart. Prefer a real stored display name (e.g. a
+    delegation counterpart's To-recipient name) over mining the body — the body may
+    be Kory's delegation note signed by Kory. Fall back to the standard resolver."""
+    stored = (stored_name or "").strip()
+    email_local = sender_email.split("@")[0].lower() if sender_email else ""
+    if stored and "@" not in stored and stored.lower() != email_local:
+        return stored.split()[0]
+    return recipient_display_name(
+        sender_email, body, fallback_first_name=sender_first_name(sender_email)
+    )
+
+
+def _thread_sender_name(thread_id: str) -> str:
+    if not thread_id:
+        return ""
+    try:
+        with get_lexi_connection() as conn:
+            row = conn.execute(
+                "SELECT sender FROM email_threads WHERE thread_id = ?", (thread_id,)
+            ).fetchone()
+        return str(row[0]) if row and row[0] else ""
+    except Exception:
+        return ""
+
+
 def build_scheduling_context_packet(proposal_id: int) -> dict[str, Any]:
     """Facts packet for Hermes compose — thread, type, rules, state."""
     with get_lexi_connection() as conn:
@@ -106,11 +132,7 @@ def build_scheduling_context_packet(proposal_id: int) -> dict[str, Any]:
     slots = _parse_slots(bundle.get("proposed_slots"))
     slot_block = format_offer_slot_block(slots, recipient_tz=format_tz)
 
-    display_name = recipient_display_name(
-        sender,
-        body,
-        fallback_first_name=sender_first_name(sender),
-    )
+    display_name = _resolve_greeting_name(bundle.get('sender'), sender, body)
 
     return {
         "ok": True,
@@ -207,11 +229,7 @@ def compose_offer_email_with_hermes(
         if conversation_id:
             thread_context = _load_thread_context(conversation_id, thread_id)
 
-    display_name = recipient_display_name(
-        proposal_sender,
-        proposal_body,
-        fallback_first_name=sender_first_name(proposal_sender),
-    )
+    display_name = _resolve_greeting_name(_thread_sender_name(thread_id), proposal_sender, proposal_body)
 
     packet = {
         "subject": proposal_subject,

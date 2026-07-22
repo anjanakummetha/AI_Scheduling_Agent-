@@ -256,6 +256,7 @@ Return ONLY a valid JSON object with exactly one key:
 
 Rules:
 - Use proper paragraph spacing (blank line between paragraphs).
+- Never greet the recipient with a sign-off word (Thanks, Thank you, Best, Regards, Cheers, Sincerely) — those are the sender's closing, not their name. If you cannot confidently determine the recipient's first name from the email, greet with "Hi there,".
 - When the recipient timezone is unknown, say so clearly and list times in Mountain Time with ET/CT/PT equivalents in parentheses.
 - Do not invent calendar times unless the email is clearly about scheduling.
 - Do not include markdown fences or text outside the JSON object."""
@@ -475,7 +476,10 @@ def begin_draft_reply(proposal_id: int, *, voice_mode: str = "") -> dict[str, An
         bundle = _fetch_proposal_bundle(proposal_id) or bundle
 
     if not voice_mode.strip():
-        voice_mode = str(bundle.get("voice_mode") or "kory")
+        # Default to Lexi handling scheduling in her own voice (from lexi@); Kory
+        # voice is opt-in only when Kory explicitly asks. Never silently fall back
+        # to Kory's (blocked) mailbox.
+        voice_mode = str(bundle.get("voice_mode") or "lexi")
 
     if voice_mode.strip():
         set_proposal_delegation_metadata(
@@ -516,7 +520,7 @@ def begin_draft_reply(proposal_id: int, *, voice_mode: str = "") -> dict[str, An
     else:
         general = _draft_general_reply(
             bundle,
-            voice_mode=str(bundle.get("voice_mode") or voice_mode or "kory"),
+            voice_mode=str(bundle.get("voice_mode") or voice_mode or "lexi"),
         )
         if not general.get("ok"):
             return general
@@ -524,7 +528,7 @@ def begin_draft_reply(proposal_id: int, *, voice_mode: str = "") -> dict[str, An
             proposal_id,
             general["drafted_reply"],
             general.get("confidence_score", 0.5),
-            voice_mode=str(bundle.get("voice_mode") or voice_mode or "kory"),
+            voice_mode=str(bundle.get("voice_mode") or voice_mode or "lexi"),
         )
         result = {
             "ok": True,

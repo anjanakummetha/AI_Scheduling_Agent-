@@ -42,10 +42,14 @@ _KORY_LOGISTICS_PATTERNS = (
 )
 
 # Hard blocks that may exist only on Master (no work Calendar twin).
+# Cover both spellings of the board name — the spec says "NextSite", the live
+# calendar says "NexSite"; protect on either.
 _MASTER_HARD_BLOCK_PATTERNS = (
     r"^doug\b",
-    r"\bnexsite\b",
+    r"\bnex(t)?site\b",
     r"\bcanopy service\b",
+    r"\bcapital\s+demo(lition)?\b",
+    r"\bcapdemo\b",
     r"\bypo\b",
 )
 

@@ -278,6 +278,7 @@ def find_valid_slots(
                 intent=intent_key,
                 meeting_format=fmt,
                 urgent=is_urgent,
+                east_coast=east_coast,
                 busy_events=busy,
                 preferences=prefs,
             )
@@ -336,6 +337,7 @@ def find_valid_slots(
                 intent=intent_key,
                 meeting_format=fmt,
                 urgent=is_urgent,
+                east_coast=east_coast,
                 busy_events=busy,
                 preferences=prefs,
                 batch_slots=batch,

@@ -452,16 +452,72 @@ def _send_lexi_html_via_draft(
     return message_id, send_result.get("log_id")
 
 
+_ORG_EMAIL_DOMAINS = {"iconicfounders.com", "ifg.vc"}
+
+
 def _kory_cc_addresses() -> list[str]:
-    """Kory stays on Lexi-sent mail so he sees replies that skip his inbox."""
-    seen: set[str] = set()
-    out: list[str] = []
-    for email in settings.kory_sender_emails:
-        addr = email.strip().lower()
-        if addr and "@" in addr and addr not in seen:
-            seen.add(addr)
-            out.append(addr)
-    return out
+    """Kory's real primary CC address (settings.kory_cc_email).
+
+    Raw address only — no enable-gate here. Lexi's outbound path applies the
+    cc_kory_enabled toggle in merge_kory_cc_addresses; other callers (e.g. Heidi
+    escalation) gate on their own flags.
+    """
+    addr = (settings.kory_cc_email or "").strip().lower()
+    return [addr] if addr and "@" in addr else []
+
+
+def _is_external_recipient(email: str) -> bool:
+    """True when the address is outside Kory's org (an outsider)."""
+    domain = email.split("@")[-1].strip().lower()
+    return bool(domain) and domain not in _ORG_EMAIL_DOMAINS
+
+
+def kory_thread_addresses() -> set[str]:
+    """All addresses that count as 'Kory is on this thread'."""
+    addrs = {(settings.kory_cc_email or "").strip().lower()}
+    addrs |= {e.strip().lower() for e in settings.kory_sender_emails}
+    return {a for a in addrs if a and "@" in a}
+
+
+def kory_on_thread(recipients: dict[str, Any]) -> bool:
+    """True when a Kory address is among the To/CC of a message (normalized dict)."""
+    kory = kory_thread_addresses()
+    if not kory:
+        return False
+    present: set[str] = set()
+    for key in ("to_recipients", "cc_recipients"):
+        for item in recipients.get(key) or []:
+            addr = ((item.get("emailAddress") or {}).get("address") or "").strip().lower()
+            if addr:
+                present.add(addr)
+    return bool(kory & present)
+
+
+def _get_lexi_message(message_id: str) -> dict[str, Any]:
+    """Read a message/draft from Lexi's mailbox (for the on-thread CC check)."""
+    result = execute_tool(
+        "OUTLOOK_GET_MESSAGE",
+        {"message_id": message_id, "user_id": "me",
+         "select": ["id", "toRecipients", "ccRecipients"]},
+        role="lexi",
+    )
+    return _coerce_data(result.get("data")) or {}
+
+
+def hubspot_bcc_addresses(to_emails: list[str]) -> list[str]:
+    """BCC the HubSpot logging address on outbound mail that reaches an outsider.
+
+    Production-only (gated by hubspot_bcc_enabled); returns [] otherwise so tests
+    and internal-only mail are never BCC'd.
+    """
+    if not settings.hubspot_bcc_enabled:
+        return []
+    addr = (settings.hubspot_bcc_address or "").strip().lower()
+    if not addr or "@" not in addr:
+        return []
+    if any(_is_external_recipient(e) for e in to_emails if e and "@" in e):
+        return [addr]
+    return []
 
 
 def _graph_recipient_list(emails: list[str]) -> list[dict[str, Any]]:
@@ -503,10 +559,15 @@ def _build_outlook_draft_arguments(
 
 
 def merge_kory_cc_addresses(existing: list[str] | None = None) -> list[str]:
-    """Merge configured Kory addresses into a CC list (deduped, lowercased)."""
+    """Merge Kory's CC into a Lexi-outbound CC list (deduped, lowercased).
+
+    The cc_kory_enabled toggle applies here (Lexi's outbound mail), so it's off in
+    sandbox tests but on in production.
+    """
+    kory = _kory_cc_addresses() if settings.cc_kory_enabled else []
     seen: set[str] = set()
     merged: list[str] = []
-    for addr in list(existing or []) + _kory_cc_addresses():
+    for addr in list(existing or []) + kory:
         normalized = addr.strip().lower()
         if normalized and "@" in normalized and normalized not in seen:
             seen.add(normalized)
@@ -515,22 +576,39 @@ def merge_kory_cc_addresses(existing: list[str] | None = None) -> list[str]:
 
 
 def ensure_kory_cc_on_lexi_draft(draft_id: str) -> None:
-    """Reply-all may drop Kory when he was not on the original To/CC — always add him."""
+    """Add Kory's CC (reply-all may drop him) and the production HubSpot BCC.
+
+    A Lexi reply-all draft is always a reply to an inbound external scheduling
+    counterpart, so its recipients are outsiders — the HubSpot logging BCC applies
+    when enabled (production only; no-op in testing).
+    """
     if settings.lexi_dry_run or not draft_id or draft_id.startswith("dry-run"):
         return
     kory_cc = merge_kory_cc_addresses()
-    if not kory_cc:
+    # Skip the Kory CC if he's already a To/CC participant of this reply-all thread
+    # (e.g. the delegation case where Kory CC'd Lexi). If the draft can't be read,
+    # fall back to CC'ing him (better to keep him informed than to drop him).
+    if kory_cc:
+        try:
+            if kory_on_thread(extract_recipient_list(_get_lexi_message(draft_id))):
+                kory_cc = []
+        except Exception:
+            pass
+    # hubspot_bcc_enabled is production-only; pass a placeholder external address so
+    # the outsider check passes for this inherently-external reply-all context.
+    hubspot_bcc = hubspot_bcc_addresses(["counterpart@external.invalid"])
+    if not kory_cc and not hubspot_bcc:
         return
-    execute_tool(
-        "OUTLOOK_UPDATE_USER_MAIL_FOLDER_MESSAGE",
-        {
-            "user_id": "me",
-            "mail_folder_id": "drafts",
-            "message_id": draft_id,
-            "cc_recipients": _graph_recipient_list(kory_cc),
-        },
-        role="lexi",
-    )
+    update_args: dict[str, Any] = {
+        "user_id": "me",
+        "mail_folder_id": "drafts",
+        "message_id": draft_id,
+    }
+    if kory_cc:
+        update_args["cc_recipients"] = _graph_recipient_list(kory_cc)
+    if hubspot_bcc:
+        update_args["bcc_recipients"] = _graph_recipient_list(hubspot_bcc)
+    execute_tool("OUTLOOK_UPDATE_USER_MAIL_FOLDER_MESSAGE", update_args, role="lexi")
 
 
 def forward_message_from_lexi_mailbox(
@@ -795,12 +873,19 @@ def send_outbound_email(
                 merged_cc.append(addr)
         if merged_cc:
             arguments["cc_emails"] = merged_cc
+    bcc: list[str] = []
     if (
         settings.lexi_write_mode == "sandbox"
         and configured_target
         and recipient.lower() != configured_target
     ):
-        arguments["bcc_emails"] = [configured_target]
+        bcc.append(configured_target)
+    # HubSpot logging BCC (production, outsider recipients only).
+    for addr in hubspot_bcc_addresses([recipient]):
+        if addr not in bcc:
+            bcc.append(addr)
+    if bcc:
+        arguments["bcc_emails"] = bcc
 
     last_error: Exception | None = None
     for tool_slug in OUTBOUND_SEND_TOOL_CANDIDATES:
@@ -981,6 +1066,8 @@ def _extract_signature_name(body: str) -> str | None:
                 return name
     for candidate in reversed(lines[-5:]):
         if _looks_like_reply_artifact(candidate):
+            continue
+        if candidate.lower().strip(" ,.!-") in signoffs:
             continue
         name = _clean_name_candidate(candidate)
         if name:

@@ -1,0 +1,35 @@
+[Unit]
+# Hermes Teams gateway — the Azure Bot messaging endpoint (:3978, /api/messages).
+# This is the process that makes Teams approval cards work in production. It is
+# SEPARATE from lexi-hermes.service (which, despite the name, runs the email
+# worker + Composio webhook on :8780). Teams needs BOTH running.
+#
+# Prereqs (set up by deploy/install.sh + scripts/setup_hermes_mcp.py):
+#   - `hermes` CLI installed and on PATH (external upstream tool, NOT a pip dep).
+#     Fallback if the CLI can't be installed on Linux: run the Hermes upstream
+#     Docker `gateway` service instead and disable this unit.
+#   - ~/.hermes/config.yaml  (platforms.teams + mcp.servers.lexi-scheduling stdio entry)
+#   - ~/.hermes/.env         (TEAMS_CLIENT_ID/SECRET/TENANT_ID, TEAMS_ALLOWED_USERS,
+#                             ANTHROPIC_API_KEY, TEAMS_PORT=3978)
+Description=Lexi Hermes Teams gateway (Azure Bot endpoint :3978 /api/messages)
+After=network-online.target lexi-hermes.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lexi
+Group=lexi
+WorkingDirectory=/opt/lexi
+Environment=HOME=/home/lexi
+# `hermes` reads ~/.hermes/config.yaml + ~/.hermes/.env for Teams creds and the
+# lexi-scheduling MCP stdio server (which spawns hermes_mcp_server.py).
+ExecStart=/usr/local/bin/hermes gateway run
+Restart=always
+RestartSec=5
+MemoryMax=1G
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lexi-gateway
+
+[Install]
+WantedBy=multi-user.target

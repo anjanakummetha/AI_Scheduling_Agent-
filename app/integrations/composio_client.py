@@ -2,12 +2,46 @@
 
 from __future__ import annotations
 
+import logging
+import random
+import time
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from composio import Composio
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_RETRYABLE_TOKENS = ("429", "500", "502", "503", "504", "overloaded", "rate limit",
+                     "timeout", "timed out", "temporarily", "connection", "econnreset")
+_NON_RETRYABLE_TOKENS = ("400", "401", "403", "404", "invalid", "not found", "unauthorized")
+
+
+def _is_retryable_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    if any(tok in msg for tok in _NON_RETRYABLE_TOKENS):
+        return False
+    return any(tok in msg for tok in _RETRYABLE_TOKENS)
+
+
+def _execute_with_retry(fn: Callable[[], Any], *, is_write: bool, tool_slug: str) -> Any:
+    """Run fn with backoff. Reads retry transient errors; writes never auto-retry
+    (a retried write could double-send/double-book)."""
+    max_attempts = 1 if is_write else 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            if attempt >= max_attempts or not _is_retryable_error(exc):
+                raise
+            delay = min(8.0, 0.5 * (2 ** (attempt - 1))) + random.uniform(0, 0.4)
+            logger.warning(
+                "Composio %s attempt %d/%d failed (%s); retrying in %.1fs",
+                tool_slug, attempt, max_attempts, str(exc)[:120], delay,
+            )
+            time.sleep(delay)
 
 
 class ComposioNotConfiguredError(RuntimeError):
@@ -25,7 +59,15 @@ def _require_api_key() -> str:
 
 @lru_cache
 def get_composio() -> Composio:
-    return Composio(api_key=_require_api_key())
+    # A per-request timeout so a stuck Composio call can't hang the worker
+    # indefinitely (a write with no timeout previously hung for minutes).
+    # max_retries=0 keeps our own _execute_with_retry the sole retry authority —
+    # the SDK must never retry a write (that could double-send/double-book).
+    return Composio(
+        api_key=_require_api_key(),
+        timeout=settings.composio_timeout_seconds,
+        max_retries=0,
+    )
 
 
 def _account_entity_id(connection_id: str) -> str:
@@ -221,12 +263,27 @@ def execute_tool(
         )
         return {"data": preview, "log_id": "dry-run-no-log", "dry_run": True}
 
-    response = get_composio().tools.execute(
-        tool_slug,
-        arguments=arguments,
-        connected_account_id=connection_id,
-        user_id=entity_id,
-        dangerously_skip_version_check=True,
+    # Structural guard on REAL execution: outside production, never reach a recipient
+    # off the allowlist (independent of the dry-run / write-mode flags above).
+    from app.safety.recipient_allowlist import assert_recipients_allowed
+
+    assert_recipients_allowed(tool_slug, arguments)
+
+    # Budget tracking — count every real Composio call (plan Phase 3).
+    from app.storage.composio_call_log import record_composio_call
+
+    record_composio_call()
+
+    response = _execute_with_retry(
+        lambda: get_composio().tools.execute(
+            tool_slug,
+            arguments=arguments,
+            connected_account_id=connection_id,
+            user_id=entity_id,
+            dangerously_skip_version_check=True,
+        ),
+        is_write=_is_write_tool(tool_slug),
+        tool_slug=tool_slug,
     )
     if isinstance(response, dict):
         data = response.get("data")

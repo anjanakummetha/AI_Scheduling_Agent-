@@ -13,7 +13,7 @@ from app.integrations.composio_client import ComposioNotConfiguredError, execute
 from app.safety.approval_gate import assert_kory_approved_write
 
 HUBSPOT_SEARCH_CONTACTS = "HUBSPOT_SEARCH_CONTACTS_BY_CRITERIA"
-HUBSPOT_LIST_CONTACTS = "HUBSPOT_GET_ALL_CONTACTS"
+HUBSPOT_LIST_CONTACTS = "HUBSPOT_LIST_CONTACTS"
 HUBSPOT_UPDATE_CONTACT = "HUBSPOT_UPDATE_CONTACT"
 HUBSPOT_MERGE_CONTACTS = "HUBSPOT_MERGE_CONTACTS"
 HUBSPOT_CREATE_NOTE = "HUBSPOT_CREATE_NOTE"
@@ -455,12 +455,13 @@ def deals_snapshot_for_brief(*, limit: int = 8) -> dict[str, Any]:
         amount = deal.get("amount")
         amt = f" · ${amount}" if amount not in (None, "") else ""
         lines.append(
-            f"• {deal.get('dealname') or 'Untitled'} — {deal.get('dealstage') or '?'}{amt}"
+            f"• **{deal.get('dealname') or 'Untitled'}** — {deal.get('dealstage') or '?'}{amt}"
         )
+        lines.append("")  # blank line between items (Teams markdown needs it)
     return {
         "ok": True,
         "deals": open_deals[:limit],
-        "kory_message": "\n".join(lines),
+        "kory_message": "\n".join(lines).rstrip(),
     }
 
 

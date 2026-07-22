@@ -9,7 +9,10 @@ def test_lexi_signoff_block() -> None:
     assert body.endswith(
         "Thank you,\nLexi\nAssistant to Kory Mitchell\nlexi@iconicfounders.com"
     )
-    assert "Hi,\n\nA few times" in body
+    # A bare "Hi," opener is intentionally dropped by _dedupe_lexi_opening; the
+    # scheduling content and bullet are preserved.
+    assert "A few times that work:" in body
+    assert "• Tuesday 2pm MT" in body
 
 
 def test_lexi_replaces_old_best_closing() -> None:

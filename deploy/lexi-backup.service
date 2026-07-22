@@ -1,0 +1,9 @@
+[Unit]
+Description=Lexi SQLite backup
+
+[Service]
+Type=oneshot
+User=lexi
+Group=lexi
+WorkingDirectory=/opt/lexi
+ExecStart=/opt/lexi/deploy/backup_lexi_db.sh

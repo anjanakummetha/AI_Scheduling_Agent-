@@ -318,12 +318,11 @@ def _call_llm_triage(subject: str, body: str) -> TriageResult:
         ensure_ascii=False,
     )
     response = client.chat.completions.create(
-        model=settings.llm_model,
+        role="triage",  # cheap, high-volume tier (Haiku by default)
         messages=[
             {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.1,
     )
     content = response.choices[0].message.content or ""
     payload = _parse_json_object(content)

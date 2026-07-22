@@ -59,6 +59,21 @@ def start_lexi_worker(
 
         init_lexi_db()
 
+        # Rotating file + console logging (plan Phase 4).
+        try:
+            from app.utils.logging_setup import configure_logging
+
+            configure_logging()
+        except Exception:
+            pass
+
+        # Safety posture banner — the effective value of every kill switch at boot.
+        from app.config import safety_posture_summary
+
+        posture = safety_posture_summary()
+        gates = " ".join(f"{k.replace('LEXI_', '')}={v}" for k, v in posture.items())
+        print(f"[lexi-worker] SAFETY POSTURE | {gates}", file=sys.stderr, flush=True)
+
         use_webhook = _webhook_enabled(webhook)
         if poll_outlook is None:
             # Poll when webhook is off; both can run if explicitly enabled.

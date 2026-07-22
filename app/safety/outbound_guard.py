@@ -17,14 +17,21 @@ def outbound_writes_allowed() -> bool:
 
 
 def teams_push_allowed() -> bool:
-    """False during dry-run or when Teams push is explicitly suppressed."""
-    if settings.lexi_dry_run:
-        return False
+    """False during dry-run or when Teams push is explicitly suppressed.
+
+    LEXI_FORCE_TEAMS_PUSH overrides the dry-run block for live Teams UAT: cards
+    push to Teams so the approval UX can be exercised, while the underlying sends
+    stay dry-run-simulated (nothing actually leaves a mailbox).
+    """
     if not settings.lexi_teams_enabled:
         return False
     if _truthy("LEXI_SUPPRESS_TEAMS_PUSH"):
         return False
     if getattr(settings, "lexi_suppress_teams_push", False):
+        return False
+    if _truthy("LEXI_FORCE_TEAMS_PUSH"):
+        return True
+    if settings.lexi_dry_run:
         return False
     return True
 

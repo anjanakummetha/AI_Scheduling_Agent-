@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.integrations.outlook_calendar import delete_calendar_event
@@ -92,14 +93,27 @@ def _release_expired_holds() -> int:
     return count
 
 
+def _next_week_window_mt(now_mt: datetime) -> tuple[datetime, datetime]:
+    """[Monday 00:00 MT of next week, the following Monday) — the "next calendar week"."""
+    this_monday = (now_mt - timedelta(days=now_mt.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    week_start = this_monday + timedelta(days=7)
+    return week_start, week_start + timedelta(days=7)
+
+
 def _friday_cleanup_next_week_holds() -> int:
-    """On Friday UTC, release pending holds that fall in the following calendar week."""
-    now = datetime.now(timezone.utc)
-    if now.weekday() != 4:  # Friday
+    """On Friday (Kory's Mountain Time), release pending holds that fall in next week.
+
+    Keyed to Kory's home timezone, not UTC — a UTC-Friday check fires from ~5 PM
+    Thursday MT and would release next-week holds a day early.
+    """
+    mt = ZoneInfo(settings.scheduling_timezone)
+    now_mt = datetime.now(mt)
+    if now_mt.weekday() != 4:  # Friday, Mountain Time
         return 0
 
-    week_start = (now + timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
-    week_end = week_start + timedelta(days=7)
+    week_start, week_end = _next_week_window_mt(now_mt)
     count = 0
 
     with get_lexi_connection() as conn:
@@ -143,7 +157,9 @@ def _friday_cleanup_next_week_holds() -> int:
 
 
 def _maybe_notify_hold_released(row: Any) -> None:
-    if not settings.lexi_teams_enabled:
+    from app.safety.outbound_guard import teams_push_allowed
+
+    if not teams_push_allowed():
         return
     try:
         from app.bot.teams_format import display_sender, display_subject

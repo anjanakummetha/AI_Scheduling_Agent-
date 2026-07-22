@@ -91,7 +91,9 @@ def test_process_due_hold_reminders_stages_draft(mock_notify, tmp_path, monkeypa
 @patch("app.integrations.outlook_email.settings")
 @patch("app.scheduling.heidi_escalation.settings")
 def test_heidi_cc_includes_kory(mock_heidi_settings, mock_settings) -> None:
-    mock_settings.kory_sender_emails = ["Kory.Mitchell@iconicfounders.com"]
+    # Heidi CC resolves Kory's real address; gated only by heidi_escalation_cc_kory,
+    # independent of the Lexi-outbound cc_kory_enabled toggle.
+    mock_settings.kory_cc_email = "Kory.Mitchell@iconicfounders.com"
     mock_heidi_settings.heidi_escalation_cc_kory = True
     cc = _kory_cc_for_heidi()
     assert any("kory.mitchell@iconicfounders.com" == addr for addr in cc)

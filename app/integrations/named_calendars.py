@@ -206,6 +206,25 @@ def default_write_calendar_name() -> str:
     return str(config.get("default_write") or work_calendar_name())
 
 
+def _is_master_calendar_name(name: str) -> bool:
+    lowered = (name or "").strip().lower()
+    master = personal_calendar_name().strip().lower()
+    return lowered == master or ("master" in lowered and "calendar" in lowered)
+
+
+def _coerce_write_target(name: str) -> str:
+    """Never write to Master — redirect any Master-targeted write to the work calendar."""
+    if _is_master_calendar_name(name):
+        work = work_calendar_name()
+        logger.warning(
+            "Write to Master calendar %r blocked by policy — redirecting to work calendar %r.",
+            name,
+            work,
+        )
+        return work
+    return name
+
+
 def conflict_calendar_names() -> list[str]:
     config = _load_calendar_config()
     names = config.get("default_read_for_conflicts") or []
@@ -421,10 +440,16 @@ def create_event_on_calendar(
     calendar_name: str | None = None,
     role: ConnectionRole = "write",
 ) -> tuple[str | None, str | None]:
-    """Create event on named calendar; falls back to default write calendar."""
+    """Create event on named calendar; falls back to default write calendar.
+
+    Policy: Lexi only writes meetings/holds to the work calendar (they sync to
+    Master). Master is read-only conflict truth — any write that would target it
+    is coerced to the work calendar.
+    """
     from app.integrations.outlook_calendar import create_calendar_event
 
     target = (calendar_name or "").strip() or default_write_calendar_name()
+    target = _coerce_write_target(target)
     resolved = resolve_calendar_name(target, role=role)
 
     if not resolved:

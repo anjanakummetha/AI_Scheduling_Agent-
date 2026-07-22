@@ -1,0 +1,27 @@
+[Unit]
+# NOTE: despite the historical name "lexi-hermes", this unit runs the email
+# WORKER (orchestrator + Composio webhook on :8780), NOT the Hermes Teams
+# gateway. The Teams gateway is lexi-gateway.service (:3978). Both are needed.
+Description=Lexi headless worker (orchestrator + Composio webhook ingress)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lexi
+Group=lexi
+WorkingDirectory=/opt/lexi
+Environment=LEXI_ENV=production
+Environment=LEXI_ENV_FILE=/opt/lexi/.env.production
+ExecStart=/opt/lexi/.venv/bin/python -m app.worker --webhook
+Restart=always
+RestartSec=5
+# Resource guardrails for the KVM2 VPS.
+MemoryMax=1G
+# Log to the journal; file logs rotate via RotatingFileHandler in-process.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lexi-hermes
+
+[Install]
+WantedBy=multi-user.target

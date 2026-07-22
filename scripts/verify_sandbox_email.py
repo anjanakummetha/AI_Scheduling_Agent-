@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
+from _live_guard import require_live_confirmation
 from app.config import settings
 from app.integrations.composio_client import execute_write_tool
 from app.integrations.outlook_email import sandbox_mailbox_mismatch, send_outbound_email
@@ -88,9 +89,11 @@ def main() -> int:
     print("  3. Junk/Other tab if sending to a separate @outlook.com login")
 
     if args.send_test:
+        target = settings.sandbox_mailbox_email or profile.get("mail") or ""
+        require_live_confirmation(f"send a real email to {target}")
         print("\n--- Sending test ---")
         msg_id, log_id = send_outbound_email(
-            to_email=settings.sandbox_mailbox_email or profile.get("mail") or "",
+            to_email=target,
             subject="Mailbox verification test",
             body=(
                 "Lexi sandbox email is working. Check Sent Items on the Composio-connected "

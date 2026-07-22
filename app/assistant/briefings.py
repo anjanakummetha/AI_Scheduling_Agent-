@@ -50,6 +50,28 @@ def _needs_kory_reply(*, sender: str, subject: str, preview: str) -> bool:
     return "?" in text
 
 
+_QUOTED_CHAIN_RE = re.compile(
+    r"(On\s+\w{3,9},?\s+\w{3,9}\s+\d{1,2},?\s+\d{4}\b.*"  # "On Tue, Jul 21, 2026 at ..."
+    r"|On\s.+?\bwrote:"                                    # "On ... wrote:"
+    r"|From:\s.+"                                          # forwarded/quoted headers
+    r"|-{3,}\s*Original Message"                           # Outlook reply divider
+    r"|_{5,})",                                            # Outlook underscore divider
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _clean_snippet(text: str, *, limit: int = 110) -> str:
+    """One-line snippet: cut quoted reply chains, collapse whitespace, truncate on a word."""
+    s = (text or "").strip()
+    match = _QUOTED_CHAIN_RE.search(s)
+    if match:
+        s = s[: match.start()]
+    s = re.sub(r"\s+", " ", s).strip()
+    if len(s) > limit:
+        s = s[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:—-") + "…"
+    return s
+
+
 def build_unanswered_brief(*, hours: int = 72, limit: int = 12) -> dict[str, Any]:
     """Emails that look relevant where Kory hasn't replied yet."""
     from app.integrations.outlook_inbox import search_inbox
@@ -96,11 +118,14 @@ def build_unanswered_brief(*, hours: int = 72, limit: int = 12) -> dict[str, Any
     else:
         for row in items[:limit]:
             who = row.get("sender_name") or row.get("sender") or "unknown"
-            lines.append(f"• **{row['subject']}** — {who}")
-            if row.get("preview"):
-                lines.append(f"  _{row['preview'][:140]}_")
+            snippet = _clean_snippet(str(row.get("preview") or ""))
+            line = f"• **{row['subject']}** — {who}"
+            if snippet:
+                line += f" — _{snippet}_"
+            lines.append(line)
+            lines.append("")  # blank line between items (Teams markdown needs it)
         if len(items) > limit:
-            lines.append(f"\n_…and {len(items) - limit} more._")
+            lines.append(f"_…and {len(items) - limit} more._")
 
     return {
         "ok": True,
@@ -146,11 +171,13 @@ def build_today_calendar_brief() -> dict[str, Any]:
         for event in meetings[:20]:
             subject = str(event.get("subject") or "(no title)")
             start_t = _format_event_time(event.get("start"), tz)
-            lines.append(f"• **{start_t}** — {subject}")
+            line = f"• **{start_t}** — {subject}"
             attendees = event.get("attendees") or []
             if attendees:
                 names = ", ".join(str(a) for a in attendees[:3])
-                lines.append(f"  _With: {names}_")
+                line += f" _(with {names})_"
+            lines.append(line)
+            lines.append("")  # blank line between events (Teams markdown needs it)
 
     return {
         "ok": True,
@@ -297,6 +324,33 @@ def build_daily_ceo_briefing() -> dict[str, Any]:
     }
 
 
+def _display_sender(sender: Any) -> str:
+    """Human-readable sender from a name/email string, a JSON string, or a Graph
+    ``{'emailAddress': {...}}`` object."""
+    value = sender
+    if isinstance(value, str):
+        s = value.strip()
+        if s.startswith("{"):
+            import ast
+            import json
+
+            parsed = None
+            try:
+                parsed = ast.literal_eval(s)  # handles Python dict repr (single quotes)
+            except (ValueError, SyntaxError):
+                try:
+                    parsed = json.loads(s)
+                except ValueError:
+                    return s
+            value = parsed
+        else:
+            return s or "unknown"
+    if isinstance(value, dict):
+        addr = value.get("emailAddress") if isinstance(value.get("emailAddress"), dict) else value
+        return str(addr.get("name") or addr.get("address") or "unknown")
+    return str(value or "unknown")
+
+
 def _pending_approval_summary() -> str:
     from app.agents.comms_agent import get_lexi_pending_queue
 
@@ -305,7 +359,8 @@ def _pending_approval_summary() -> str:
         return "**Pending approvals:** None — you're caught up on Lexi drafts."
     lines = [f"**Pending approvals:** {len(items)} draft(s) waiting\n"]
     for item in items[:5]:
-        lines.append(f"• {item.subject} — {item.sender}")
+        lines.append(f"• **{item.subject}** — {_display_sender(item.sender)}")
+        lines.append("")
     if len(items) > 5:
         lines.append(f"_…and {len(items) - 5} more. Say `pending`._")
     return "\n".join(lines)
