@@ -35,11 +35,11 @@ export LEXI_ORCHESTRATOR_ENABLED=true
 export LEXI_LOCAL_MODE=true
 export LEXI_ALLOWED_RECIPIENTS="anjana.kummetha@iconicfounders.com,lexi@iconicfounders.com"
 
-SCRATCH="/private/tmp/claude-501/-Users-anjanakummetha-Downloads-IFG-2026-Summer-Internship-AI-Scheduling-Agent/ad9534d6-2bd1-4f86-9b61-a4bc9e545b8a/scratchpad"
-LOG="$SCRATCH/gateway.log"
+mkdir -p logs
+LOG="logs/gateway_livewrite.log"
 
 echo "=== SAFETY PRE-FLIGHT (aborts if Kory not provably protected) ==="
-.venv/bin/python "$SCRATCH/preflight_livewrite.py" || { echo "PREFLIGHT FAILED — not starting gateway."; exit 1; }
+.venv/bin/python scripts/uat/preflight_livewrite.py || { echo "PREFLIGHT FAILED — not starting gateway."; exit 1; }
 
 echo "=== Starting Hermes gateway on :3978 (detached, live-write sandbox) ==="
 nohup hermes gateway run --replace > "$LOG" 2>&1 &

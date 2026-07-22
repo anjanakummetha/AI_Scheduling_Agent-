@@ -1,10 +1,13 @@
 # Caddy reverse proxy for the joint deploy (auto-TLS via Let's Encrypt).
-# Replace the hostnames with your real domains before use.
+# Single host: everything is served from the VPS hostname, path-routed.
 #
-# The CEO dashboard (public, behind auth) and the Lexi webhook ingress are the
-# only public surfaces. The Lexi read-only API (127.0.0.1:8081) is NEVER proxied.
+# Public surfaces on this host:
+#   /api/messages   → Hermes Teams gateway  (Azure Bot messaging endpoint)
+#   /webhooks/*     → Lexi Composio webhook ingress
+#   everything else → CEO dashboard (Next.js, behind its own login)
+# The Lexi read-only API (127.0.0.1:8081) is NEVER proxied — localhost only.
 
-dash.example.com {
+srv1686061.hstgr.cloud {
 	encode gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -12,17 +15,20 @@ dash.example.com {
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
-	reverse_proxy 127.0.0.1:3000
-}
 
-# Composio webhook ingress for the Lexi agent (only the webhook path is exposed).
-agent.example.com {
-	encode gzip
-	handle /webhook* {
+	# Teams: Azure Bot → Hermes gateway (lexi-gateway.service on :3978).
+	handle /api/messages* {
+		reverse_proxy 127.0.0.1:3978
+	}
+
+	# Composio webhook ingress → Lexi worker (lexi-hermes.service on :8780).
+	# Must match app/worker/webhook_server.py WEBHOOK_PATH = /webhooks/composio.
+	handle /webhooks/* {
 		reverse_proxy 127.0.0.1:8780
 	}
-	# Everything else on this host is closed.
+
+	# Everything else → CEO dashboard (ceo-dashboard.service on :3000), auth-gated.
 	handle {
-		respond "Not found" 404
+		reverse_proxy 127.0.0.1:3000
 	}
 }

@@ -1,4 +1,7 @@
 [Unit]
+# NOTE: despite the historical name "lexi-hermes", this unit runs the email
+# WORKER (orchestrator + Composio webhook on :8780), NOT the Hermes Teams
+# gateway. The Teams gateway is lexi-gateway.service (:3978). Both are needed.
 Description=Lexi headless worker (orchestrator + Composio webhook ingress)
 After=network-online.target
 Wants=network-online.target

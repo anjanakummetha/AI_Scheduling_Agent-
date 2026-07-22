@@ -1,3 +1,8 @@
+> ⚠️ **Superseded for production by `deploy/README.md`.** This doc describes the
+> local/ngrok pilot wiring. For the VPS deploy, the Azure messaging endpoint points at
+> `https://srv1686061.hstgr.cloud/api/messages` (Caddy → `lexi-gateway.service` on :3978),
+> not ngrok. Use this doc only for the Azure Bot / Hermes concepts and local testing.
+
 # Connect Teams + Azure → Hermes → Lexi (Hermes-only)
 
 **Pilot:** read Kory Outlook, write sandbox mailbox, **no send without Kory approval**.
