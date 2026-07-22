@@ -21,9 +21,12 @@ def test_hubspot_status_reads_via_correct_slug():
         calls["limit"] = limit
         return {"contacts": [{"id": "1", "email": "a@b.com"}]}
 
-    with patch.object(h, "search_contacts", side_effect=fake_search):
-        with patch.object(h, "hubspot_writes_blocked", return_value=True):
-            out = h.hubspot_status_brief()
+    # Patch hubspot_configured too — keyless CI has no connection id, so without
+    # this the brief short-circuits to ok=False before reaching search_contacts.
+    with patch.object(h, "hubspot_configured", return_value=True):
+        with patch.object(h, "search_contacts", side_effect=fake_search):
+            with patch.object(h, "hubspot_writes_blocked", return_value=True):
+                out = h.hubspot_status_brief()
     assert out["ok"] is True
 
 

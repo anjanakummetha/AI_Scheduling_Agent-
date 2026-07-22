@@ -65,6 +65,13 @@ def execute_search_action(
     allow_unlisted: bool = False,
 ) -> dict[str, Any]:
     """Run one Composio Search slug (read-only; uses COMPOSIO_API_KEY + user_id)."""
+    # Validate the slug first — a malformed or unlisted slug is rejected regardless
+    # of whether the Composio API is configured (pure input check, no I/O).
+    normalized = (slug or "").strip().upper()
+    if not normalized.startswith("COMPOSIO_SEARCH_"):
+        raise ValueError(f"Not a Composio Search slug: {slug}")
+    if not allow_unlisted and normalized not in SEARCH_ALLOW_SLUGS:
+        raise PermissionError(f"Search slug {normalized} is not on the allowlist.")
     if not search_enabled():
         raise ComposioNotConfiguredError(
             "Composio Search disabled. Set COMPOSIO_API_KEY and LEXI_COMPOSIO_SEARCH_ENABLED=true."
@@ -72,11 +79,6 @@ def execute_search_action(
     from app.integrations.person_research import throttle_search_calls
 
     throttle_search_calls()
-    normalized = (slug or "").strip().upper()
-    if not normalized.startswith("COMPOSIO_SEARCH_"):
-        raise ValueError(f"Not a Composio Search slug: {slug}")
-    if not allow_unlisted and normalized not in SEARCH_ALLOW_SLUGS:
-        raise PermissionError(f"Search slug {normalized} is not on the allowlist.")
     return execute_search_tool(normalized, arguments)
 
 
