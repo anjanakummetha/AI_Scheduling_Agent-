@@ -11,7 +11,13 @@ from app.agents.lexi_mail_intent import (
 )
 
 
-def test_is_mail_to_lexi():
+def test_is_mail_to_lexi(monkeypatch):
+    # Hermetic: pin the Lexi address set so the test doesn't depend on a loaded
+    # env file (CI runs keyless, so settings.lexi_mailbox_email would be empty).
+    # settings is a frozen dataclass, so patch the module-level reader instead.
+    import app.agents.lexi_mail_intent as m
+
+    monkeypatch.setattr(m, "_lexi_addresses", lambda: {"lexi@iconicfounders.com"})
     assert is_mail_to_lexi({"to_recipients": ["lexi@iconicfounders.com"]})
     assert not is_mail_to_lexi({"to_recipients": ["kory@iconicfounders.com"], "cc_recipients": ["lexi@iconicfounders.com"]})
 

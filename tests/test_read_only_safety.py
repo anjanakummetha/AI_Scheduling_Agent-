@@ -15,17 +15,23 @@ def test_write_slug_detection():
     assert not is_outlook_write_slug("OUTLOOK_FIND_MEETING_TIMES")
 
 
-def test_kory_space_write_blocked_when_read_only(monkeypatch=None):
-    """When read-only is on and connection is Kory, writes raise."""
-    if not kory_space_read_only_enabled():
-        return
-    kory_id = __import__("app.config", fromlist=["settings"]).settings.kory_composio_connection_id
-    if not kory_id:
-        kory_id = "ca_kory_test"
+def test_kory_space_write_blocked_when_read_only(monkeypatch):
+    """When read-only is on and connection is Kory, writes raise.
+
+    Hermetic: force read-only ON and pin the Kory connection id so the test is
+    independent of whichever env file (if any) is loaded — CI runs keyless.
+    settings is a frozen dataclass, so patch the module-level reads instead.
+    """
+    from types import SimpleNamespace
+
+    import app.safety.kory_read_only as k
+
+    monkeypatch.setattr(k, "kory_space_read_only_enabled", lambda: True)
+    monkeypatch.setattr(k, "settings", SimpleNamespace(kory_composio_connection_id="ca_kory_test"))
     try:
         assert_kory_space_write_allowed(
             tool_slug="OUTLOOK_UPDATE_CALENDAR_EVENT",
-            connection_id=kory_id,
+            connection_id="ca_kory_test",
         )
         raise AssertionError("Expected PermissionError for Kory write")
     except PermissionError as exc:
